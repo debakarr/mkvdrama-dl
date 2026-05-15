@@ -525,8 +525,11 @@ def resolve_shorteners(
                         sys.stdout.flush()
                     else:
                         # Filecrypt page rendered empty (JS content loading)
-                        print(f"    {' ' * len(prefix)}  Filecrypt container requires JavaScript for extraction.")
-                        print(f"    {' ' * len(prefix)}  Paste URL at https://dcrypt.it/ or use JDownloader2 for direct links.")
+                        print(f"    {' ' * len(prefix)}  Filecrypt blocked by Cloudflare — manual steps:")
+                        print(f"    {' ' * len(prefix)}    1. Open URL in browser, solve security check")
+                        print(f"    {' ' * len(prefix)}    2. Download the .dlc file from the page")
+                        print(f"    {' ' * len(prefix)}    3. Upload .dlc at https://dcrypt.it/ for direct links")
+                        print(f"    {' ' * len(prefix)}  Or use JDownloader2 — handles it automatically.")
                         sys.stdout.flush()
 
                 if not resolved:
