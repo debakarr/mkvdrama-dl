@@ -311,6 +311,15 @@ def resolve_shorteners(
                         results[remaining_url] = remaining_url
                     break
 
+                # Skip oii.la links — complex multi-page redirect chain
+                if "oii.la" in url:
+                    short_id = url.rstrip("/").rsplit("/", 1)[-1][:25]
+                    print(f"    [{done + 1}/{total}] {short_id}... SKIP (oii.la not supported)")
+                    results[url] = url
+                    done += 1
+                    sys.stdout.flush()
+                    continue
+
                 short_id = url.rstrip("/").rsplit("/", 1)[-1][:25]
                 print(f"    [{done + 1}/{total}] Opening {short_id}...", end=" ")
                 sys.stdout.flush()
