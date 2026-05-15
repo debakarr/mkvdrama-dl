@@ -107,7 +107,11 @@ def _attr_str_opt(el: Tag, attr: str) -> str | None:
 class MkvDramaApi:
     """API client for mkvdrama.net."""
 
-    def __init__(self, cookie_string: str | None = None) -> None:
+    def __init__(
+        self,
+        cookie_string: str | None = None,
+        flaresolverr_url: str | None = None,
+    ) -> None:
         self.session = cloudscraper.create_scraper(
             browser={"browser": "chrome", "platform": "windows", "mobile": False},
         )
@@ -119,6 +123,7 @@ class MkvDramaApi:
             self.session.headers["Origin"] = BASE_URL
             self.session.headers["Referer"] = BASE_URL + "/"
 
+        self._flaresolverr_url = flaresolverr_url or os.getenv("FLARESOLVERR_URL", "")
         self._base_url = BASE_URL
 
     def search_dramas(self, query: str) -> Search:
@@ -239,6 +244,7 @@ class MkvDramaApi:
         if download_html:
             episodes = self._parse_download_html(download_html)
             self._resolve_c_links(episodes)
+            self._resolve_shorteners(episodes)
             drama.episodes = episodes
 
         return drama
@@ -398,6 +404,37 @@ class MkvDramaApi:
 
         episodes = sorted(seen_episodes.values(), key=lambda e: e.number)
         return episodes
+
+    def _resolve_shorteners(self, episodes: list[Episode]) -> None:
+        """Resolve ouo.io/oii.la shortener URLs using FlareSolverr (if configured)."""
+        from mkvdrama_downloader.shortener import (
+            is_flaresolverr_configured,
+            is_shortener_url,
+            resolve_shorteners,
+        )
+
+        if not self._flaresolverr_url and not is_flaresolverr_configured():
+            return
+
+        # Collect unique shortener URLs
+        unique: dict[str, str] = {}
+        for episode in episodes:
+            for link in episode.links:
+                if is_shortener_url(link.url):
+                    unique.setdefault(link.url, link.url)
+
+        urls = list(unique.keys())
+        if not urls:
+            return
+
+        logger.info("Resolving %d shortener URLs via FlareSolverr...", len(urls))
+        resolved = resolve_shorteners(urls)
+
+        for episode in episodes:
+            for link in episode.links:
+                if link.url in resolved and resolved[link.url] != link.url:
+                    logger.debug("Resolved: %s -> %s", link.url, resolved[link.url])
+                    link.url = resolved[link.url]
 
     def _resolve_c_links(
         self,

@@ -40,7 +40,11 @@ def _get_api(ctx: click.Context) -> MkvDramaApi:
     ctx.ensure_object(dict)
     if "api" not in ctx.obj:
         cookie = os.getenv("MKVDRAMA_COOKIE", "")
-        ctx.obj["api"] = MkvDramaApi(cookie_string=cookie or None)
+        flaresolverr = os.getenv("FLARESOLVERR_URL", "") or None
+        ctx.obj["api"] = MkvDramaApi(
+            cookie_string=cookie or None,
+            flaresolverr_url=flaresolverr,
+        )
     return ctx.obj["api"]
 
 
@@ -100,14 +104,33 @@ def search(ctx: click.Context, query: str) -> None:
     help="Directory to save link files",
     type=click.Path(file_okay=False, dir_okay=True),
 )
+@click.option(
+    "--flaresolverr",
+    "-f",
+    default=None,
+    metavar="URL",
+    help="FlareSolverr endpoint for resolving ouo.io shorteners (e.g. http://localhost:8191)",
+)
 @click.pass_context
-def dl(ctx: click.Context, drama_url_or_query: str, episode: str | None, output_dir: str | None) -> None:
+def dl(
+    ctx: click.Context,
+    drama_url_or_query: str,
+    episode: str | None,
+    output_dir: str | None,
+    flaresolverr: str | None,
+) -> None:
     """Download or list drama episodes from mkvdrama.net.
 
     Provide a drama URL or search query. If a search query returns multiple
     results, you'll be prompted to select one.
     """
     api = _get_api(ctx)
+
+    # Override FlareSolverr URL from --flaresolverr flag if provided
+    if flaresolverr:
+        import os as _os
+
+        _os.environ["FLARESOLVERR_URL"] = flaresolverr.rstrip("/")
 
     # Determine if input is URL or search query
     is_url = drama_url_or_query.startswith("http://") or drama_url_or_query.startswith("https://")

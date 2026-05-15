@@ -28,6 +28,12 @@ mkvdrama dl "flower of evil" --episode 1-5
 
 # Save links to files
 mkvdrama dl "sold out on you" --output-dir ./links
+
+# Resolve ouo.io shorteners automatically (requires FlareSolverr)
+mkvdrama dl "sold out on you" --flaresolverr http://localhost:8191
+
+# Or via env var
+FLARESOLVERR_URL=http://localhost:8191 mkvdrama dl "sold out on you"
 ```
 
 ## How It Works
@@ -55,11 +61,20 @@ Open each ouo.io link in a regular browser, complete the "I'm a human"
 verification, then download from the chosen file host (Mega, Gofile,
 Send.cm, Pixeldrain).
 
-### Option 3: FlareSolverr (Advanced)
-For automated resolution, [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr)
-is a Docker-based service that runs a full browser to solve Cloudflare
-challenges. The [sootio](https://github.com/iceblinker/sootio) project
-uses this for ouo.io resolution.
+### Option 3: FlareSolverr (Automated CLI resolution)
+For fully automated command-line resolution, use [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr).
+It runs a real undetectable browser in a Docker container.
+
+```bash
+# Start FlareSolverr
+docker run -d -p 8191:8191 ghcr.io/flaresolverr/flaresolverr:latest
+
+# Use with mkvdrama-dl
+mkvdrama dl "sold out on you" --flaresolverr http://localhost:8191
+# Or set env var
+export FLARESOLVERR_URL=http://localhost:8191
+mkvdrama dl "sold out on you"
+```
 
 ### Option 4: ouo.io Premium
 ouo.io offers a paid API that provides direct links without verification.
@@ -70,4 +85,4 @@ ouo.io offers a paid API that provides direct links without verification.
   `cloudscraper` (TLS fingerprint impersonation) to bypass it.
 - ouo.io/oii.la shorteners use Cloudflare Turnstile challenges that
   cannot be bypassed with simple HTTP requests — they need a real
-  browser or JDownloader2.
+  browser (FlareSolverr) or JDownloader2.
