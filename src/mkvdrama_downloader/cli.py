@@ -109,7 +109,15 @@ def search(ctx: click.Context, query: str) -> None:
     "-f",
     default=None,
     metavar="URL",
-    help="FlareSolverr endpoint for resolving ouo.io shorteners (e.g. http://localhost:8191)",
+    help="FlareSolverr endpoint for resolving ouo.io shorteners "
+    "(e.g. http://localhost:8191)",
+)
+@click.option(
+    "--resolve",
+    is_flag=True,
+    default=False,
+    help="Resolve ouo.io shorteners using Playwright "
+    "(requires: pip install playwright && playwright install chromium)",
 )
 @click.pass_context
 def dl(
@@ -118,6 +126,7 @@ def dl(
     episode: str | None,
     output_dir: str | None,
     flaresolverr: str | None,
+    resolve: bool,
 ) -> None:
     """Download or list drama episodes from mkvdrama.net.
 
@@ -129,8 +138,12 @@ def dl(
     # Override FlareSolverr URL from --flaresolverr flag if provided
     if flaresolverr:
         import os as _os
-
         _os.environ["FLARESOLVERR_URL"] = flaresolverr.rstrip("/")
+
+    # Enable shortener resolution
+    if resolve:
+        import os as _os
+        _os.environ["MKVDRAMA_RESOLVE"] = "1"
 
     # Determine if input is URL or search query
     is_url = drama_url_or_query.startswith("http://") or drama_url_or_query.startswith("https://")

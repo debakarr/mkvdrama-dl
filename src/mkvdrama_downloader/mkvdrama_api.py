@@ -406,14 +406,19 @@ class MkvDramaApi:
         return episodes
 
     def _resolve_shorteners(self, episodes: list[Episode]) -> None:
-        """Resolve ouo.io/oii.la shortener URLs using FlareSolverr (if configured)."""
+        """Resolve ouo.io/oii.la shortener URLs using Playwright/FlareSolverr."""
         from mkvdrama_downloader.shortener import (
             is_flaresolverr_configured,
             is_shortener_url,
             resolve_shorteners,
         )
 
-        if not self._flaresolverr_url and not is_flaresolverr_configured():
+        resolve_enabled = (
+            self._flaresolverr_url
+            or is_flaresolverr_configured()
+            or os.getenv("MKVDRAMA_RESOLVE") == "1"
+        )
+        if not resolve_enabled:
             return
 
         # Collect unique shortener URLs
