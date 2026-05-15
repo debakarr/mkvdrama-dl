@@ -14,12 +14,20 @@ from mkvdrama_downloader.models.drama import Drama, Episode
 logger = logging.getLogger(__name__)
 
 
+def _links_key(ep: Episode) -> str:
+    """Create a hashable key from an episode's links for comparison."""
+    return "|".join(sorted(f"{ln.quality}|{ln.url}" for ln in ep.links))
+
+
 def format_episode_output(
     drama: Drama,
     episodes: list[Episode],
     output_dir: str | Path | None = None,
 ) -> None:
     """Format and output episode download links.
+
+    If all episodes share the exact same download links, shows them
+    once with a compact note (e.g. "Same links for episodes 1-6").
 
     Args:
         drama: Drama metadata
@@ -34,29 +42,87 @@ def format_episode_output(
     if base_dir:
         base_dir.mkdir(parents=True, exist_ok=True)
 
-    for ep in episodes:
-        if not ep.links:
-            continue
+    # Check if all episodes share the same links
+    link_keys = [_links_key(ep) for ep in episodes if ep.links]
+    all_same = len(set(link_keys)) == 1 and len(link_keys) > 1
 
-        ep_label = f"Episode {int(ep.number)}"
-        print(f"\n  {ep_label}:")
+    if all_same:
+        # Compact display: show links once for the whole range
+        ep_nums = sorted(int(e.number) for e in episodes if e.links)
+        range_str = _format_ep_range(ep_nums)
+        first_ep = next(e for e in episodes if e.links)
+
+        print(f"\n  Same links for episodes {range_str}:")
         print(f"  {'=' * 40}")
+        _print_links(first_ep.links)
 
         if base_dir:
-            link_file = base_dir / f"{_sanitize_filename(drama.title)}_E{int(ep.number):02d}_links.txt"
+            filename = f"{_sanitize_filename(drama.title)}_E{ep_nums[0]:02d}-{ep_nums[-1]:02d}_links.txt"
+            link_file = base_dir / filename
             with open(link_file, "w", encoding="utf-8") as f:
-                for link in ep.links:
-                    quality = f" [{link.quality}]" if link.quality else ""
-                    host = f" @ {link.host}" if link.host else ""
-                    line = f"{link.url}"
-                    print(f"    {quality}{host}: {link.url}")
-                    f.write(line + "\n")
+                for link in first_ep.links:
+                    f.write(f"{link.url}\n")
             print(f"    [Links saved to: {link_file}]")
+    else:
+        # Standard display: show each episode separately
+        for ep in episodes:
+            if not ep.links:
+                continue
+
+            ep_label = f"Episode {int(ep.number)}"
+            print(f"\n  {ep_label}:")
+            print(f"  {'=' * 40}")
+
+            if base_dir:
+                link_file = base_dir / f"{_sanitize_filename(drama.title)}_E{int(ep.number):02d}_links.txt"
+                with open(link_file, "w", encoding="utf-8") as f:
+                    _print_links(ep.links, f)
+                print(f"    [Links saved to: {link_file}]")
+            else:
+                _print_links(ep.links)
+
+
+def _print_links(links, file=None):
+    """Print download links, optionally writing to a file."""
+    for link in links:
+        quality = f" [{link.quality}]" if link.quality else ""
+        host = f" @ {link.host}" if link.host else ""
+        line = f"    {quality}{host}: {link.url}"
+        print(line)
+        if file:
+            file.write(f"{link.url}\n")
+
+
+def _format_ep_range(nums: list[int]) -> str:
+    """Format a list of episode numbers into a compact range string.
+
+    Examples:
+        [1, 2, 3] -> '1-3'
+        [1, 2, 3, 5, 6] -> '1-3, 5-6'
+        [1, 3, 5] -> '1, 3, 5'
+    """
+    if not nums:
+        return ""
+
+    ranges: list[tuple[int, int]] = []
+    start = end = nums[0]
+
+    for n in nums[1:]:
+        if n == end + 1:
+            end = n
         else:
-            for link in ep.links:
-                quality = f" [{link.quality}]" if link.quality else ""
-                host = f" @ {link.host}" if link.host else ""
-                print(f"    {quality}{host}: {link.url}")
+            ranges.append((start, end))
+            start = end = n
+    ranges.append((start, end))
+
+    parts = []
+    for s, e in ranges:
+        if s == e:
+            parts.append(str(s))
+        else:
+            parts.append(f"{s}-{e}")
+
+    return ", ".join(parts)
 
 
 def _sanitize_filename(name: str) -> str:

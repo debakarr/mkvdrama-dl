@@ -413,11 +413,7 @@ class MkvDramaApi:
             resolve_shorteners,
         )
 
-        resolve_enabled = (
-            self._flaresolverr_url
-            or is_flaresolverr_configured()
-            or os.getenv("MKVDRAMA_RESOLVE") == "1"
-        )
+        resolve_enabled = self._flaresolverr_url or is_flaresolverr_configured() or os.getenv("MKVDRAMA_RESOLVE") == "1"
         if not resolve_enabled:
             return
 

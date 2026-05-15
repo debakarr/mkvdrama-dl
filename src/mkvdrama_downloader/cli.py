@@ -109,15 +109,20 @@ def search(ctx: click.Context, query: str) -> None:
     "-f",
     default=None,
     metavar="URL",
-    help="FlareSolverr endpoint for resolving ouo.io shorteners "
-    "(e.g. http://localhost:8191)",
+    help="FlareSolverr endpoint for resolving ouo.io shorteners (e.g. http://localhost:8191)",
 )
 @click.option(
     "--resolve",
     is_flag=True,
     default=False,
-    help="Resolve ouo.io shorteners using Playwright "
-    "(requires: pip install playwright && playwright install chromium)",
+    help="Resolve ouo.io shorteners using Playwright (requires: pip install playwright && playwright install chromium)",
+)
+@click.option(
+    "--quality",
+    "-q",
+    default=None,
+    metavar="QUALITY",
+    help="Filter by resolution: 540p, 720p, 1080p, 1080pHD (can specify multiple: 720p,1080p)",
 )
 @click.pass_context
 def dl(
@@ -127,6 +132,7 @@ def dl(
     output_dir: str | None,
     flaresolverr: str | None,
     resolve: bool,
+    quality: str | None,
 ) -> None:
     """Download or list drama episodes from mkvdrama.net.
 
@@ -138,11 +144,13 @@ def dl(
     # Override FlareSolverr URL from --flaresolverr flag if provided
     if flaresolverr:
         import os as _os
+
         _os.environ["FLARESOLVERR_URL"] = flaresolverr.rstrip("/")
 
     # Enable shortener resolution
     if resolve:
         import os as _os
+
         _os.environ["MKVDRAMA_RESOLVE"] = "1"
 
     # Determine if input is URL or search query
@@ -207,10 +215,18 @@ def dl(
         synopsis_short = drama.synopsis[:150] + "..." if len(drama.synopsis) > 150 else drama.synopsis
         print(f"Synopsis: {synopsis_short}")
 
+    # Filter by quality/resolution if specified
+    if quality:
+        qualities = [q.strip().lower() for q in quality.split(",")]
+        for ep in episodes:
+            ep.links = [ln for ln in ep.links if (ln.quality or "").lower() in qualities]
+        episodes = [ep for ep in episodes if ep.links]
+
     print(f"\nEpisodes: {len(episodes)}")
     format_episode_output(drama, episodes, output_dir=output_dir)
 
-    print(f"\nTotal download links found: {sum(len(e.links) for e in episodes)}")
+    total_links = sum(len(e.links) for e in episodes)
+    print(f"\nTotal download links found: {total_links}")
 
 
 def _parse_episode_range(range_str: str, max_ep: int) -> set[int]:
