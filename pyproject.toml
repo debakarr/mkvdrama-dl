@@ -1,0 +1,61 @@
+[project]
+name = "mkvdrama-downloader"
+version = "0.1.0"
+description = "Downloader for https://mkvdrama.net/ - scrape download links for Asian dramas"
+readme = "README.md"
+authors = [{ name = "Debakar Roy", email = "allinonedibakar@gmail.com" }]
+requires-python = ">=3.10"
+dependencies = [
+    "click>=8.3.3",
+    "requests>=2.34.0",
+    "pydantic>=2.13.4",
+    "validators>=0.35.0",
+    "beautifulsoup4>=4.13.0",
+    "python-dotenv>=1.2.2",
+    "cryptography>=48.0.0",
+    "cloudscraper>=1.2.71",
+]
+
+[project.scripts]
+mkvdrama = "mkvdrama_downloader.cli:mkvdrama"
+
+[dependency-groups]
+dev = [
+    "pytest-cov>=7.1.0",
+    "mypy>=2.1.0",
+    "ruff>=0.11.0",
+    "types-requests>=2.33.0.20260508",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "F",    # pyflakes
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "B",    # flake8-bugbear
+    "I",    # isort
+    "N",    # pep8-naming
+    "C4",   # flake8-comprehensions
+    "S",    # flake8-bandit
+    "UP",   # pyupgrade
+]
+ignore = [
+    "B904",    # raise-without-from-inside-except
+    "S101",    # assert-in-test (ok for tests)
+    "S110",    # try-except-pass
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[build-system]
+requires = ["uv_build>=0.11.14,<0.12"]
+build-backend = "uv_build"
