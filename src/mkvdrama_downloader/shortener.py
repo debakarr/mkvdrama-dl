@@ -160,14 +160,26 @@ def _resolve_with_page(page, url: str, timeout: int) -> str | None:
             )
             time.sleep(random.uniform(0.05, 0.15))
 
-        # Wait for button to become active (up to 12s)
-        try:
-            page.wait_for_selector(
-                "#btn-main:not([disabled])",
-                timeout=12000,
-            )
-        except PlaywrightTimeout:
-            pass
+        # Wait for button to become active (try multiple selectors)
+        button_selectors = [
+            "#btn-main:not([disabled])",
+            "button:not([disabled]):has-text('Get Link')",
+            "button:not([disabled]):has-text('Verify')",
+            "a:not([disabled]):has-text('Get Link')",
+        ]
+        found = False
+        for sel in button_selectors:
+            try:
+                page.wait_for_selector(sel, timeout=5000)
+                found = True
+                break
+            except PlaywrightTimeout:
+                continue
+        if not found:
+            try:
+                page.wait_for_selector("#btn-main", timeout=7000)
+            except PlaywrightTimeout:
+                pass
 
         # Remove overlays and click
         clicked = _remove_overlays_and_click(page)
@@ -255,7 +267,18 @@ def resolve_shorteners(
     try:
         _check_playwright()
         total = len(urls)
+        import signal
         import sys
+
+        interrupted = False
+
+        def _handle_sigint(signum, frame):
+            nonlocal interrupted
+            if not interrupted:
+                print("\n    Interrupted. Cleaning up...")
+                interrupted = True
+
+        original_sigint = signal.signal(signal.SIGINT, _handle_sigint)
 
         print(f"\n  Resolving {total} shortener URL(s) with Playwright...")
         sys.stdout.flush()
@@ -278,10 +301,21 @@ def resolve_shorteners(
 
             done = 0
             for url in urls:
-                print(f"    [{done + 1}/{total}] Opening {url.rstrip('/').rsplit('/', 1)[-1][:25]}...", end=" ")
+                if interrupted:
+                    print("    Skipping remaining URLs.")
+                    for remaining_url in urls[done:]:
+                        results[remaining_url] = remaining_url
+                    break
+
+                short_id = url.rstrip("/").rsplit("/", 1)[-1][:25]
+                print(f"    [{done + 1}/{total}] Opening {short_id}...", end=" ")
                 sys.stdout.flush()
                 page = context.new_page()
-                resolved = _resolve_with_page(page, url, timeout)
+                try:
+                    resolved = _resolve_with_page(page, url, timeout)
+                except KeyboardInterrupt:
+                    resolved = None
+                    interrupted = True
                 page.close()
                 result_url = resolved or url
                 results[url] = result_url
@@ -294,6 +328,12 @@ def resolve_shorteners(
 
             context.close()
             browser.close()
+
+        signal.signal(signal.SIGINT, original_sigint)
+
+        if interrupted:
+            print("  Resolution cancelled.")
+            return results
 
     except ImportError as e:
         logger.info("Playwright not available: %s", e)

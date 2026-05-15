@@ -215,12 +215,16 @@ def dl(
         synopsis_short = drama.synopsis[:150] + "..." if len(drama.synopsis) > 150 else drama.synopsis
         print(f"Synopsis: {synopsis_short}")
 
-    # Filter by quality/resolution if specified
+    # Filter by quality/resolution if specified (BEFORE resolving shorteners)
     if quality:
         qualities = [q.strip().lower() for q in quality.split(",")]
         for ep in episodes:
             ep.links = [ln for ln in ep.links if (ln.quality or "").lower() in qualities]
         episodes = [ep for ep in episodes if ep.links]
+
+    # Resolve shorteners AFTER filtering (only unique URLs needed)
+    if resolve or flaresolverr or os.getenv("FLARESOLVERR_URL"):
+        api.resolve_episode_shorteners(episodes)
 
     print(f"\nEpisodes: {len(episodes)}")
     format_episode_output(drama, episodes, output_dir=output_dir)
