@@ -13,6 +13,7 @@ from __future__ import annotations
 import logging
 import os
 import random  # noqa: S311 - used for human mouse simulation, not crypto
+import sys  # noqa: F401 - used in closures for stdout flushing
 import time
 from urllib.parse import urlparse
 
@@ -134,10 +135,25 @@ def _is_ouo_domain(url: str) -> bool:
     return is_shortener_url(url)
 
 
-def _resolve_with_page(page, url: str, timeout: int) -> str | None:
-    """Resolve a single ouo.io URL using an existing Playwright page."""
+def _resolve_with_page(page, url: str, timeout: int, status=None) -> str | None:
+    """Resolve a single ouo.io URL using an existing Playwright page.
+
+    Args:
+        page: Playwright page object.
+        url: URL to resolve.
+        timeout: Max seconds.
+        status: Optional function(msg) called at each step to show progress.
+    """
+
+    def _status(msg):
+        if status:
+            status(msg)
+        else:
+            logger.debug(msg)
+
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
+    _status("Loading page...")
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=20000)
     except Exception as e:
@@ -176,21 +192,25 @@ def _resolve_with_page(page, url: str, timeout: int) -> str | None:
                 pass
         else:
             # ouo.io / ouo.press: countdown + "Get Link" button
+            _status("Waiting for countdown...")
             # Random mouse movements
             for _ in range(random.randint(2, 3)):
                 page.mouse.move(random.randint(100, 1100), random.randint(100, 600))
                 time.sleep(random.uniform(0.05, 0.1))
 
             # Wait for button to become active
+            _status("Waiting for button...")
             try:
                 page.wait_for_selector("#btn-main:not([disabled])", timeout=12000)
             except PlaywrightTimeout:
                 pass
 
+            _status("Clicking button...")
             # Remove overlays and click
             _remove_overlays_and_click(page)
 
             # Wait for navigation
+            _status("Following redirect...")
             try:
                 page.wait_for_function(
                     f"() => window.location.href !== '{current}'",
@@ -272,7 +292,6 @@ def resolve_shorteners(
         _check_playwright()
         total = len(urls)
         import signal
-        import sys
 
         interrupted = False
 
@@ -321,11 +340,18 @@ def resolve_shorteners(
                     continue
 
                 short_id = url.rstrip("/").rsplit("/", 1)[-1][:25]
-                print(f"    [{done + 1}/{total}] Opening {short_id}...", end=" ")
+                prefix = f"    [{done + 1}/{total}] {short_id}"
+                print(f"{prefix}  Starting...", end="")
                 sys.stdout.flush()
+
+                def step_status(msg, _p=prefix):
+                    # Use \r to overwrite the current line with updated status
+                    print(f"\r{_p}  {msg}", end="")
+                    sys.stdout.flush()
+
                 page = context.new_page()
                 try:
-                    resolved = _resolve_with_page(page, url, timeout)
+                    resolved = _resolve_with_page(page, url, timeout, status=step_status)
                 except KeyboardInterrupt:
                     resolved = None
                     interrupted = True
@@ -333,8 +359,10 @@ def resolve_shorteners(
                 result_url = resolved or url
                 results[url] = result_url
                 done += 1
-                status = "OK" if resolved else "SKIP"
-                print(f"{status} -> {result_url[:70] if resolved else 'unchanged'}")
+                status_sym = "OK" if resolved else "SKIP"
+                display = result_url[:70] if resolved else "unchanged"
+                # Clear line with spaces then print final result
+                print(f"\r{prefix}  {status_sym} -> {display}")
                 sys.stdout.flush()
                 if not resolved:
                     remaining.append(url)
