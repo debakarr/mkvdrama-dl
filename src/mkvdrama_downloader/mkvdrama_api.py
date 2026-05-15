@@ -396,7 +396,38 @@ class MkvDramaApi:
                 self._parse_direct_link(link_el, seen_episodes)
 
         episodes = sorted(seen_episodes.values(), key=lambda e: e.number)
+        # Resolve _c/ internal links to actual shortener URLs
+        self._resolve_c_links(episodes)
         return episodes
+
+    def _resolve_c_links(self, episodes: list[Episode]) -> None:
+        """Resolve _c/ internal redirect links to actual shortener URLs.
+
+        The _c/ links are internal proxy URLs that redirect to ouo.io or
+        filecrypt. Following them through the authenticated session reveals
+        the actual shortener URL.
+        """
+        for episode in episodes:
+            for link in episode.links:
+                if "/_c/" not in link.url:
+                    continue
+                try:
+                    resp = self.session.get(
+                        link.url,
+                        allow_redirects=True,
+                        timeout=10,
+                        headers={
+                            "Referer": self._base_url + "/",
+                            "Accept": "text/html,*/*",
+                        },
+                    )
+                    if resp.status_code < 400 and resp.url != link.url:
+                        logger.debug("Resolved _c/ link: %s -> %s", link.url, resp.url)
+                        link.url = resp.url
+                    elif resp.status_code == 403:
+                        logger.debug("_c/ link access denied (403): %s", link.url)
+                except Exception as e:
+                    logger.debug("Failed to resolve _c/ link %s: %s", link.url, e)
 
     def _parse_download_section(
         self,
