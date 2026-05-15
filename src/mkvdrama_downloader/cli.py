@@ -100,8 +100,15 @@ def search(ctx: click.Context, query: str) -> None:
     help="Directory to save link files",
     type=click.Path(file_okay=False, dir_okay=True),
 )
+@click.option(
+    "--resolve",
+    "-r",
+    is_flag=True,
+    default=False,
+    help="Resolve ouo.io/oii.la shorteners using Playwright (requires: pip install mkvdrama-downloader[resolve])",
+)
 @click.pass_context
-def dl(ctx: click.Context, drama_url_or_query: str, episode: str | None, output_dir: str | None) -> None:
+def dl(ctx: click.Context, drama_url_or_query: str, episode: str | None, output_dir: str | None, resolve: bool) -> None:
     """Download or list drama episodes from mkvdrama.net.
 
     Provide a drama URL or search query. If a search query returns multiple
@@ -145,7 +152,7 @@ def dl(ctx: click.Context, drama_url_or_query: str, episode: str | None, output_
     print(f"\nFetching: {drama_title}")
     print(f"  {drama_url}")
 
-    drama = api.get_drama(drama_url)
+    drama = api.get_drama(drama_url, resolve_shorteners=resolve)
 
     if not drama.episodes:
         print("\nNo download links found. This may be due to Cloudflare protection.")

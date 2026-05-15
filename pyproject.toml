@@ -16,6 +16,11 @@ dependencies = [
     "cloudscraper>=1.2.71",
 ]
 
+[project.optional-dependencies]
+resolve = [
+    "playwright>=1.59.0",
+]
+
 [project.scripts]
 mkvdrama = "mkvdrama_downloader.cli:mkvdrama"
 
