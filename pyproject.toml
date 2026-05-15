@@ -14,13 +14,10 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "cryptography>=48.0.0",
     "cloudscraper>=1.2.71",
-    "playwright>=1.59.0",
+    "curl-cffi>=0.15.0",
 ]
 
-[project.optional-dependencies]
-resolve = [
-    "playwright>=1.59.0",
-]
+
 
 [project.scripts]
 mkvdrama = "mkvdrama_downloader.cli:mkvdrama"

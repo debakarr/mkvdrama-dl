@@ -219,14 +219,8 @@ class MkvDramaApi:
 
         return None
 
-    def get_drama(self, url_or_slug: str, resolve_shorteners: bool = False) -> Drama:
-        """Get drama details and episode download links.
-
-        Args:
-            url_or_slug: Drama URL or URL slug/path.
-            resolve_shorteners: If True, resolve ouo.io/oii.la shorteners
-                using Playwright (requires optional dependency).
-        """
+    def get_drama(self, url_or_slug: str) -> Drama:
+        """Get drama details and episode download links."""
         if url_or_slug.startswith("http"):
             url = url_or_slug.rstrip("/")
         else:
@@ -244,7 +238,7 @@ class MkvDramaApi:
         download_html = self._resolve_download_panel(slug)
         if download_html:
             episodes = self._parse_download_html(download_html)
-            self._resolve_c_links(episodes, resolve_shorteners=resolve_shorteners)
+            self._resolve_c_links(episodes)
             drama.episodes = episodes
 
         return drama
@@ -405,40 +399,9 @@ class MkvDramaApi:
         episodes = sorted(seen_episodes.values(), key=lambda e: e.number)
         return episodes
 
-    def _resolve_shorteners(self, episodes: list[Episode]) -> None:
-        """Resolve ouo.io/oii.la shortener URLs using Playwright."""
-        from mkvdrama_downloader.shortener import is_shortener_url, resolve_shortener_urls
-
-        shortener_urls = []
-        for episode in episodes:
-            for link in episode.links:
-                if is_shortener_url(link.url):
-                    shortener_urls.append(link.url)
-
-        if not shortener_urls:
-            return
-
-        logger.info("Resolving %d shortener URLs with Playwright...", len(shortener_urls))
-        try:
-            resolved = resolve_shortener_urls(shortener_urls)
-            for episode in episodes:
-                for link in episode.links:
-                    if link.url in resolved and resolved[link.url] != link.url:
-                        logger.debug(
-                            "Resolved shortener: %s -> %s",
-                            link.url,
-                            resolved[link.url],
-                        )
-                        link.url = resolved[link.url]
-        except ImportError as e:
-            logger.warning("%s", e)
-        except Exception as e:
-            logger.warning("Shortener resolution failed: %s", e)
-
     def _resolve_c_links(
         self,
         episodes: list[Episode],
-        resolve_shorteners: bool = False,
     ) -> None:
         """Resolve _c/ internal redirect links to actual shortener URLs.
 
@@ -461,16 +424,17 @@ class MkvDramaApi:
                         },
                     )
                     if resp.status_code < 400 and resp.url != link.url:
-                        logger.debug("Resolved _c/ link: %s -> %s", link.url, resp.url)
-                        link.url = resp.url
+                        # Reject Cloudflare/Turnstile challenge URLs
+                        final = resp.url
+                        if "turnstile" not in final and "challenge" not in final and "_c/" not in final:
+                            logger.debug("Resolved _c/ link: %s -> %s", link.url, final)
+                            link.url = final
+                        else:
+                            logger.debug("Rejected _c/ resolution (challenge page): %s", final)
                     elif resp.status_code == 403:
                         logger.debug("_c/ link access denied (403): %s", link.url)
                 except Exception as e:
                     logger.debug("Failed to resolve _c/ link %s: %s", link.url, e)
-
-        # Optional: further resolve ouo.io/oii.la shorteners via Playwright
-        if resolve_shorteners:
-            self._resolve_shorteners(episodes)
 
     def _parse_download_section(
         self,
