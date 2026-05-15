@@ -525,8 +525,8 @@ def resolve_shorteners(
                         sys.stdout.flush()
                     else:
                         # Filecrypt page rendered empty (JS content loading)
-                        print(f"    {' ' * len(prefix)}  Container page requires JavaScript to render.")
-                        print(f"    {' ' * len(prefix)}  Get direct links: paste URL at https://dcrypt.it/")
+                        print(f"    {' ' * len(prefix)}  Filecrypt container requires JavaScript for extraction.")
+                        print(f"    {' ' * len(prefix)}  Paste URL at https://dcrypt.it/ or use JDownloader2 for direct links.")
                         sys.stdout.flush()
 
                 if not resolved:
