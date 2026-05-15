@@ -144,57 +144,61 @@ def _resolve_with_page(page, url: str, timeout: int) -> str | None:
         logger.debug("Page load failed for %s: %s", url, e)
         return None
 
-    max_steps = 5
-    for step in range(max_steps):
+    max_steps = 2
+    for _step in range(max_steps):
         current = page.url
-        logger.debug("Step %s: %s", step + 1, current)
-
         if not _is_ouo_domain(current):
             return current
 
-        # Random mouse movements
-        for _ in range(random.randint(3, 5)):
-            page.mouse.move(
-                random.randint(100, 1100),
-                random.randint(100, 600),
-            )
-            time.sleep(random.uniform(0.05, 0.15))
-
-        # Wait for button to become active (try multiple selectors)
-        button_selectors = [
-            "#btn-main:not([disabled])",
-            "button:not([disabled]):has-text('Get Link')",
-            "button:not([disabled]):has-text('Verify')",
-            "a:not([disabled]):has-text('Get Link')",
-        ]
-        found = False
-        for sel in button_selectors:
+        if "oii.la" in current:
+            # oii.la: blog page with Turnstile + "Continue" button
             try:
-                page.wait_for_selector(sel, timeout=5000)
-                found = True
-                break
+                # Remove overlays, then wait for and click any post-captcha button
+                page.evaluate("""
+                    document.querySelectorAll('iframe').forEach(el => el.remove());
+                    document.querySelectorAll('div[data-shb]').forEach(el => el.remove());
+                """)
+                btn = page.wait_for_selector(
+                    "button:has-text('Continue'), a:has-text('Continue')",
+                    timeout=20000,
+                )
+                if btn:
+                    btn.evaluate("el => el.click()")
+                    try:
+                        page.wait_for_function(
+                            f"() => window.location.href !== '{current}'",
+                            timeout=15000,
+                        )
+                    except PlaywrightTimeout:
+                        pass
+                    continue
             except PlaywrightTimeout:
-                continue
-        if not found:
+                pass
+        else:
+            # ouo.io / ouo.press: countdown + "Get Link" button
+            # Random mouse movements
+            for _ in range(random.randint(2, 3)):
+                page.mouse.move(random.randint(100, 1100), random.randint(100, 600))
+                time.sleep(random.uniform(0.05, 0.1))
+
+            # Wait for button to become active
             try:
-                page.wait_for_selector("#btn-main", timeout=7000)
+                page.wait_for_selector("#btn-main:not([disabled])", timeout=12000)
             except PlaywrightTimeout:
                 pass
 
-        # Remove overlays and click
-        clicked = _remove_overlays_and_click(page)
-        if not clicked:
-            logger.debug("No button found at step %s", step + 1)
+            # Remove overlays and click
+            _remove_overlays_and_click(page)
 
-        # Wait for navigation
-        try:
-            page.wait_for_function(
-                f"() => window.location.href !== '{current}'",
-                timeout=10000,
-            )
-        except PlaywrightTimeout:
-            logger.debug("No navigation at step %s", step + 1)
-        time.sleep(0.5)
+            # Wait for navigation
+            try:
+                page.wait_for_function(
+                    f"() => window.location.href !== '{current}'",
+                    timeout=10000,
+                )
+            except PlaywrightTimeout:
+                pass
+            time.sleep(0.5)
 
     # After all steps, check final URL
     final = page.url
