@@ -499,7 +499,6 @@ def resolve_shorteners(
                             if len(dcrypt_links) > 6:
                                 print(f"    {' ' * len(prefix)}    ... and {len(dcrypt_links) - 6} more")
                             sys.stdout.flush()
-                            # Remove dcrypt entry from online list
                             fc_entries = [e for e in fc_entries if e.get("host") != "dcrypt.it"]
 
                         online = [e for e in fc_entries if e["online"] == "online"]
@@ -518,6 +517,11 @@ def resolve_shorteners(
                         if len(online) > 6:
                             rest = len(online) - len(shown)
                             print(f"    {' ' * len(prefix)}  ... ({rest} more host links)")
+                        sys.stdout.flush()
+                    else:
+                        # Filecrypt page rendered empty (JS content loading)
+                        print(f"    {' ' * len(prefix)}  Container page requires JavaScript to render.")
+                        print(f"    {' ' * len(prefix)}  Get direct links: paste URL at https://dcrypt.it/")
                         sys.stdout.flush()
 
                 if not resolved:
