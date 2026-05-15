@@ -101,13 +101,15 @@ def extract_filecrypt_links(url: str) -> list[dict[str, Any]]:
 
         is_online = row.select_one("i.online") is not None
 
-        entries.append({
-            "host": host,
-            "filename": filename,
-            "size": size,
-            "online": "online" if is_online else "offline",
-            "link_url": f"https://{FILECRYPT_DOMAIN}/Link/{link_id}.html",
-        })
+        entries.append(
+            {
+                "host": host,
+                "filename": filename,
+                "size": size,
+                "online": "online" if is_online else "offline",
+                "link_url": f"https://{FILECRYPT_DOMAIN}/Link/{link_id}.html",
+            }
+        )
 
     # Try DLC + dcrypt.it for direct download links
     try:
@@ -133,18 +135,21 @@ def extract_filecrypt_links(url: str) -> list[dict[str, Any]]:
                         )
                         if dcrypt_resp.status_code == 200:
                             import json as _json
+
                             dcrypt_data = _json.loads(dcrypt_resp.text)
                             dcrypt_links = dcrypt_data.get("success", {}).get("links", [])
                             if dcrypt_links:
                                 # Add as a special entry
-                                entries.append({
-                                    "host": "dcrypt.it",
-                                    "filename": f"{len(dcrypt_links)} direct links",
-                                    "size": "",
-                                    "online": "online",
-                                    "link_url": "",
-                                    "dcrypt_links": dcrypt_links,
-                                })
+                                entries.append(
+                                    {
+                                        "host": "dcrypt.it",
+                                        "filename": f"{len(dcrypt_links)} direct links",
+                                        "size": "",
+                                        "online": "online",
+                                        "link_url": "",
+                                        "dcrypt_links": dcrypt_links,
+                                    }
+                                )
     except Exception as e:
         logger.debug("DLC/dcrypt.it extraction failed: %s", e)
 
