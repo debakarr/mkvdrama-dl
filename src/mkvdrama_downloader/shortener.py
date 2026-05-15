@@ -15,6 +15,7 @@ import os
 import random  # noqa: S311 - used for human mouse simulation, not crypto
 import sys  # noqa: F401 - used in closures for stdout flushing
 import time
+from typing import Any
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
@@ -36,10 +37,12 @@ def is_filecrypt_url(url: str) -> bool:
     return FILECRYPT_DOMAIN in url and "/Container/" in url
 
 
-def extract_filecrypt_links(url: str) -> list[dict[str, str]]:
+def extract_filecrypt_links(url: str) -> list[dict[str, Any]]:
     """Fetch a filecrypt.cc container page and extract download entries.
 
     Returns a list of dicts with keys: host, filename, size, online, link_url.
+
+    Also attempts DLC + dcrypt.it extraction for direct download links.
     """
     import re as _re
 
@@ -60,7 +63,7 @@ def extract_filecrypt_links(url: str) -> list[dict[str, str]]:
         return []
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    entries: list[dict[str, str]] = []
+    entries: list[dict[str, Any]] = []
 
     def _tag_attr(el: Tag, attr: str, default: str = "") -> str:
         val = el.get(attr)
@@ -105,6 +108,45 @@ def extract_filecrypt_links(url: str) -> list[dict[str, str]]:
             "online": "online" if is_online else "offline",
             "link_url": f"https://{FILECRYPT_DOMAIN}/Link/{link_id}.html",
         })
+
+    # Try DLC + dcrypt.it for direct download links
+    try:
+        dlc_btn = soup.select_one("button.dlcdownload")
+        if dlc_btn:
+            onclick = _tag_attr(dlc_btn, "onclick")
+            m = _re.search(r"getAttribute\('([^']+)'\)", onclick)
+            if m:
+                attr_name = m.group(1).lower()
+                dlc_id = ""
+                for k, v in dlc_btn.attrs.items():
+                    if k.lower() == attr_name:
+                        dlc_id = v if isinstance(v, str) else (v[0] if isinstance(v, list) else "")
+                        break
+                if dlc_id:
+                    dlc_url = f"https://{FILECRYPT_DOMAIN}/DLC/{dlc_id}.dlc"
+                    dlc_resp = scraper.get(dlc_url, timeout=15)
+                    if dlc_resp.status_code == 200 and len(dlc_resp.text) > 100:
+                        dcrypt_resp = scraper.post(
+                            "http://dcrypt.it/decrypt/paste",
+                            data={"content": dlc_resp.text},
+                            timeout=15,
+                        )
+                        if dcrypt_resp.status_code == 200:
+                            import json as _json
+                            dcrypt_data = _json.loads(dcrypt_resp.text)
+                            dcrypt_links = dcrypt_data.get("success", {}).get("links", [])
+                            if dcrypt_links:
+                                # Add as a special entry
+                                entries.append({
+                                    "host": "dcrypt.it",
+                                    "filename": f"{len(dcrypt_links)} direct links",
+                                    "size": "",
+                                    "online": "online",
+                                    "link_url": "",
+                                    "dcrypt_links": dcrypt_links,
+                                })
+    except Exception as e:
+        logger.debug("DLC/dcrypt.it extraction failed: %s", e)
 
     return entries
 
@@ -447,6 +489,19 @@ def resolve_shorteners(
                 if resolved and is_filecrypt_url(resolved):
                     fc_entries = extract_filecrypt_links(resolved)
                     if fc_entries:
+                        # Show dcrypt.it links first (direct download links)
+                        dcrypt_entry = next((e for e in fc_entries if e.get("host") == "dcrypt.it"), None)
+                        if dcrypt_entry:
+                            dcrypt_links = dcrypt_entry.get("dcrypt_links", [])
+                            print(f"    {' ' * len(prefix)}  Direct download links (via dcrypt.it):")
+                            for dl in dcrypt_links[:6]:
+                                print(f"    {' ' * len(prefix)}    {dl}")
+                            if len(dcrypt_links) > 6:
+                                print(f"    {' ' * len(prefix)}    ... and {len(dcrypt_links) - 6} more")
+                            sys.stdout.flush()
+                            # Remove dcrypt entry from online list
+                            fc_entries = [e for e in fc_entries if e.get("host") != "dcrypt.it"]
+
                         online = [e for e in fc_entries if e["online"] == "online"]
                         shown = set()
                         for entry in online:
@@ -462,7 +517,7 @@ def resolve_shorteners(
                                 break
                         if len(online) > 6:
                             rest = len(online) - len(shown)
-                            print(f"    {' ' * len(prefix)}  ... ({rest} more links — use --output-dir to save all)")
+                            print(f"    {' ' * len(prefix)}  ... ({rest} more host links)")
                         sys.stdout.flush()
 
                 if not resolved:
