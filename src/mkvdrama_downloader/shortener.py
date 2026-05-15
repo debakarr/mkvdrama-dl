@@ -443,16 +443,26 @@ def resolve_shorteners(
                 print(f"\r{prefix}  {status_sym} -> {display}")
                 sys.stdout.flush()
 
-                # If resolved to filecrypt, extract direct host links
+                # If resolved to filecrypt, extract and show host entries
                 if resolved and is_filecrypt_url(resolved):
                     fc_entries = extract_filecrypt_links(resolved)
                     if fc_entries:
-                        online = [e for e in fc_entries if e["online"] == "online"][:4]
+                        online = [e for e in fc_entries if e["online"] == "online"]
+                        shown = set()
                         for entry in online:
-                            short_file = entry["filename"][:60] if entry["filename"] else ""
-                            print(f"    {' ' * len(prefix)}  Host: {entry['host']:30s} {short_file}")
-                        if len(fc_entries) > 4:
-                            print(f"    {' ' * len(prefix)}  ... and {len(fc_entries) - 4} more links")
+                            host_short = entry["host"].replace("https://", "").replace("http://", "").split("/")[0]
+                            ep_match = __import__("re").search(r"S\d+E\d+", entry["filename"])
+                            ep_str = f" ({ep_match.group(0)})" if ep_match else ""
+                            key = f"{host_short}{ep_str}"
+                            if key in shown:
+                                continue
+                            shown.add(key)
+                            print(f"    {' ' * len(prefix)}  {host_short:20s} {entry['filename'][:55]}")
+                            if len(shown) >= 6:
+                                break
+                        if len(online) > 6:
+                            rest = len(online) - len(shown)
+                            print(f"    {' ' * len(prefix)}  ... ({rest} more links — use --output-dir to save all)")
                         sys.stdout.flush()
 
                 if not resolved:
