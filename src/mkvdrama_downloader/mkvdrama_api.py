@@ -403,8 +403,6 @@ class MkvDramaApi:
                 self._parse_direct_link(link_el, seen_episodes)
 
         episodes = sorted(seen_episodes.values(), key=lambda e: e.number)
-        # Resolve _c/ internal links to actual shortener URLs
-        self._resolve_c_links(episodes)
         return episodes
 
     def _resolve_shorteners(self, episodes: list[Episode]) -> None:
@@ -483,7 +481,7 @@ class MkvDramaApi:
         label_el = section.select_one(".sorattlx, .sorattl, .soratt, h3, h4")
         label = label_el.get_text(strip=True) if isinstance(label_el, Tag) else ""
 
-        ep_number = self._extract_episode_number(label)
+        ep_range = self._extract_episode_range(label)
 
         for link_box in section.select(".soraurlx, .soraurl"):
             if not isinstance(link_box, Tag):
@@ -511,10 +509,10 @@ class MkvDramaApi:
                     label=label,
                     quality=quality,
                     host=host,
-                    episode_number=ep_number,
+                    episode_number=ep_range[0] if ep_range else None,
                     link_text=cast(str, link.get_text(strip=True)),
                 )
-                self._add_link_to_episode(seen, ep_number or 0, dl)
+                self._add_link_range(seen, ep_range, dl)
 
     def _parse_token_link(
         self,
@@ -544,7 +542,7 @@ class MkvDramaApi:
                 if isinstance(ep_container, Tag):
                     label = _attr_str(ep_container, "data-4xptf")
 
-        ep_number = self._extract_episode_number(label)
+        ep_range = self._extract_episode_range(label)
 
         parent = el.find_parent()
         host: str | None = None
@@ -558,10 +556,10 @@ class MkvDramaApi:
             label=label,
             quality="",
             host=host,
-            episode_number=ep_number,
+            episode_number=ep_range[0] if ep_range else None,
             link_text=label,
         )
-        self._add_link_to_episode(seen, ep_number or 0, dl)
+        self._add_link_range(seen, ep_range, dl)
 
     def _parse_direct_link(
         self,
@@ -589,31 +587,52 @@ class MkvDramaApi:
         else:
             quality = ""
 
-        ep_number = self._extract_episode_number(label)
+        ep_range = self._extract_episode_range(label)
 
         dl = DownloadLink(
             url=href,
             label=label,
             quality=quality,
-            episode_number=ep_number,
+            episode_number=ep_range[0] if ep_range else None,
             link_text=cast(str, el.get_text(strip=True)),
         )
-        self._add_link_to_episode(seen, ep_number or 0, dl)
+        self._add_link_range(seen, ep_range, dl)
 
-    def _extract_episode_number(self, label: str) -> int | None:
-        """Extract episode number from a label string."""
+    def _extract_episode_range(self, label: str) -> tuple[int, int] | None:
+        """Extract episode number or range from a label string.
+
+        Returns (start, end) tuple, e.g.:
+        - "Episode 3" -> (3, 3)
+        - "Episode 01 - 06" -> (1, 6)
+        - "Episodes 1-13" -> (1, 13)
+        - "E12" -> (12, 12)
+        """
         if not label:
             return None
 
-        patterns = [
-            r"(?:episode|ep|eps|ep\.)\s*(\d+)",
-            r"\bE(\d+)\b",
-            r"^\s*0*(\d{1,3})\s*$",
+        # Pattern 1: "Episode 01 - 06", "Episodes 1-13", "EP 1 - 12"
+        range_patterns = [
+            r"(?:episode|episodes|ep|eps|ep\.)\s*(\d{1,4})\s*(?:-|–|—|to)\s*(\d{1,4})",
+            r"\bE(\d{1,4})\s*(?:-|–|—)\s*E?(\d{1,4})\b",
         ]
-        for pattern in patterns:
+        for pattern in range_patterns:
             match = re.search(pattern, label, re.IGNORECASE)
             if match:
-                return int(match.group(1))
+                start, end = int(match.group(1)), int(match.group(2))
+                if 0 < start <= end:
+                    return (start, end)
+
+        # Pattern 2: Single episode number
+        single_patterns = [
+            r"(?:episode|episodes|ep|eps|ep\.)\s*(\d{1,4})",
+            r"\bE(\d{1,4})\b",
+            r"^\s*0*(\d{1,4})\s*$",
+        ]
+        for pattern in single_patterns:
+            match = re.search(pattern, label, re.IGNORECASE)
+            if match:
+                num = int(match.group(1))
+                return (num, num)
 
         return None
 
@@ -625,13 +644,26 @@ class MkvDramaApi:
         except Exception:
             return None
 
-    def _add_link_to_episode(
+    def _add_link_range(
         self,
         seen: dict[int | float, Episode],
-        ep_num: int | float,
+        ep_range: tuple[int, int] | None,
         link: DownloadLink,
     ) -> None:
-        """Add a download link to the appropriate episode."""
-        if ep_num not in seen:
-            seen[ep_num] = Episode(number=ep_num, title=f"Episode {int(ep_num)}")
-        seen[ep_num].links.append(link)
+        """Add a download link to episode(s), expanding ranges into individual episodes.
+
+        For a range like (1, 6), the link is added to episodes 1 through 6.
+        For None, the link is added to episode 0 (unknown).
+        """
+        if ep_range is None:
+            # Unknown episode number
+            if 0 not in seen:
+                seen[0] = Episode(number=0, title="Unknown Episode")
+            seen[0].links.append(link)
+            return
+
+        start, end = ep_range
+        for ep_num in range(start, end + 1):
+            if ep_num not in seen:
+                seen[ep_num] = Episode(number=ep_num, title=f"Episode {ep_num}")
+            seen[ep_num].links.append(link)

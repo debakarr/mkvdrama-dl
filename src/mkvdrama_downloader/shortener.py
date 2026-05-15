@@ -52,10 +52,18 @@ class ShortenerResolver:
         _check_playwright()
         from playwright.async_api import async_playwright
 
-        if cls._browser is None and not cls._launched:
-            cls._launched = True
-            cls._playwright = await async_playwright().start()
-            cls._browser = await cls._playwright.chromium.launch(
+        if cls._browser is not None:
+            return cls._browser
+
+        if cls._launched:
+            # Previously tried and failed
+            raise RuntimeError("Playwright browser previously failed to launch")
+
+        cls._launched = True
+        try:
+            p = await async_playwright().start()
+            cls._playwright = p
+            cls._browser = await p.chromium.launch(
                 headless=True,
                 args=[
                     "--no-sandbox",
@@ -63,7 +71,10 @@ class ShortenerResolver:
                     "--disable-dev-shm-usage",
                 ],
             )
-        return cls._browser
+            return cls._browser
+        except Exception:
+            cls._launched = False  # Allow retry
+            raise
 
     @classmethod
     async def resolve_url(cls, url: str, timeout: int = 30) -> str:
@@ -200,37 +211,24 @@ class ShortenerResolver:
 # --- Synchronous wrappers ---
 
 
-def _run_async(coro):
-    """Run an async coroutine synchronously."""
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        return asyncio.run(coro)
-    # If there's already a running loop, create a new one in a thread
-    import concurrent.futures
-
-    with concurrent.futures.ThreadPoolExecutor() as executor:
-        future = executor.submit(asyncio.run, coro)
-        return future.result()
-
-
-def resolve_shortener_url(url: str, timeout: int = 30) -> str:
-    """Synchronous wrapper for ShortenerResolver.resolve_url."""
-    return _run_async(ShortenerResolver.resolve_url(url, timeout))
-
-
 def resolve_shortener_urls(
     urls: list[str],
     timeout: int = 30,
     max_concurrent: int = 3,
 ) -> dict[str, str]:
-    """Synchronous wrapper for ShortenerResolver.resolve_many."""
-    return _run_async(ShortenerResolver.resolve_many(urls, timeout, max_concurrent))
+    """Resolve multiple shortener URLs synchronously.
+
+    Uses asyncio.run() which creates a fresh event loop for the batch.
+    All URLs are processed concurrently within a single browser session.
+    """
+    return asyncio.run(
+        ShortenerResolver.resolve_many(urls, timeout, max_concurrent),
+    )
 
 
 def cleanup_shortener() -> None:
-    """Synchronous wrapper for ShortenerResolver.cleanup."""
+    """Clean up Playwright browser resources."""
     try:
-        _run_async(ShortenerResolver.cleanup())
+        asyncio.run(ShortenerResolver.cleanup())
     except Exception:
         pass
