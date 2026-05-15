@@ -2,48 +2,43 @@
 
 Downloader for https://mkvdrama.net/ — scrape download links for Asian dramas.
 
-## Installation
-
-```bash
-pip install mkvdrama-downloader
-```
-
-Or with uv:
-
-```bash
-uv tool install mkvdrama-downloader
-```
-
-For ouo.io shortener resolution (optional, requires Chromium):
-
-```bash
-pip install playwright && playwright install chromium
-```
-
-## Usage
+## Usage (from source)
 
 ```bash
 # Search for a drama
-mkvdrama search "flower of evil"
+uv run mkvdrama search "flower of evil"
 
 # List download links for a drama
-mkvdrama dl https://mkvdrama.net/804524-the-flowers-of-evil-2026
+uv run mkvdrama dl https://mkvdrama.net/804524-the-flowers-of-evil-2026
 
 # Filter by episode range
-mkvdrama dl "sold out on you" --episode 1-5
+uv run mkvdrama dl "sold out on you" --episode 1-5
 
 # Filter by quality (540p, 720p, 1080p, 1080pHD)
-mkvdrama dl "all of us are dead" --quality 1080p
+uv run mkvdrama dl "all of us are dead" --quality 1080p
 
 # Save links to files
-mkvdrama dl "sold out on you" --output-dir ./links
+uv run mkvdrama dl "sold out on you" --output-dir ./links
 
-# Resolve ouo.io shorteners to direct download pages
-mkvdrama dl "all of us are dead" --quality 1080p --resolve
+# Resolve ouo.io shorteners to filecrypt URLs (requires Playwright)
+uv run mkvdrama dl "all of us are dead" --quality 1080p --resolve
 
 # Use FlareSolverr instead of Playwright
-mkvdrama dl "all of us are dead" --flaresolverr http://localhost:8191
+uv run mkvdrama dl "all of us are dead" --flaresolverr http://localhost:8191
 ```
+
+## Setup
+
+```bash
+# Install dependencies
+uv sync
+
+# For ouo.io resolution with --resolve (optional)
+uv run playwright install chromium
+```
+
+> **Note**: Once stable, this will be published to PyPI as `mkvdrama-downloader`.
+> For now, run from the repo root with `uv run mkvdrama ...`.
 
 ## How It Works
 
