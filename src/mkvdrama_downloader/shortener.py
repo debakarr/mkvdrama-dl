@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 logger = logging.getLogger(__name__)
 
 SHORTENER_DOMAINS = ["ouo.io", "oii.la", "ouo.press"]
+FILECRYPT_DOMAIN = "filecrypt.cc"
 
 FLARESOLVERR_URL = os.getenv("FLARESOLVERR_URL", "").rstrip("/") or ""
 
@@ -28,6 +29,84 @@ def is_shortener_url(url: str) -> bool:
     """Check if a URL is from a supported shortener domain."""
     parsed = urlparse(url)
     return any(domain in parsed.netloc for domain in SHORTENER_DOMAINS)
+
+
+def is_filecrypt_url(url: str) -> bool:
+    """Check if a URL is a filecrypt.cc container page."""
+    return FILECRYPT_DOMAIN in url and "/Container/" in url
+
+
+def extract_filecrypt_links(url: str) -> list[dict[str, str]]:
+    """Fetch a filecrypt.cc container page and extract download entries.
+
+    Returns a list of dicts with keys: host, filename, size, online, link_url.
+    """
+    import re as _re
+
+    import cloudscraper
+    from bs4 import BeautifulSoup, Tag
+
+    scraper = cloudscraper.create_scraper(
+        browser={"browser": "chrome", "platform": "windows", "mobile": False},
+    )
+
+    try:
+        resp = scraper.get(url, timeout=20)
+        if resp.status_code != 200:
+            logger.warning("Filecrypt fetch failed: %d", resp.status_code)
+            return []
+    except Exception as e:
+        logger.warning("Filecrypt request failed: %s", e)
+        return []
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    entries: list[dict[str, str]] = []
+
+    def _tag_attr(el: Tag, attr: str, default: str = "") -> str:
+        val = el.get(attr)
+        return str(val) if val else default
+
+    for row in soup.select("tr.kwj3"):
+        if not isinstance(row, Tag):
+            continue
+        btn = row.select_one("button.download")
+        if not isinstance(btn, Tag):
+            continue
+
+        btn_id = _tag_attr(btn, "id")
+        if not btn_id:
+            continue
+
+        data_attr = f"data-{btn_id.lower()}"
+        link_id = _tag_attr(btn, data_attr) or _tag_attr(btn, "value")
+        if not link_id:
+            continue
+
+        host_el = row.select_one("a.external_link")
+        host = _tag_attr(host_el, "href") if isinstance(host_el, Tag) else ""
+
+        title_cell = row.select_one("td[title]")
+        filename = _tag_attr(title_cell, "title") if isinstance(title_cell, Tag) else ""
+
+        size = ""
+        for cell in row.select("td"):
+            if isinstance(cell, Tag):
+                text = cell.get_text(strip=True)
+                if _re.match(r"^\d+(\.\d+)?\s*(GB|MB|KB|TB)$", text, _re.IGNORECASE):
+                    size = text
+                    break
+
+        is_online = row.select_one("i.online") is not None
+
+        entries.append({
+            "host": host,
+            "filename": filename,
+            "size": size,
+            "online": "online" if is_online else "offline",
+            "link_url": f"https://{FILECRYPT_DOMAIN}/Link/{link_id}.html",
+        })
+
+    return entries
 
 
 def _check_playwright() -> None:
@@ -361,9 +440,21 @@ def resolve_shorteners(
                 done += 1
                 status_sym = "OK" if resolved else "SKIP"
                 display = result_url[:70] if resolved else "unchanged"
-                # Clear line with spaces then print final result
                 print(f"\r{prefix}  {status_sym} -> {display}")
                 sys.stdout.flush()
+
+                # If resolved to filecrypt, extract direct host links
+                if resolved and is_filecrypt_url(resolved):
+                    fc_entries = extract_filecrypt_links(resolved)
+                    if fc_entries:
+                        online = [e for e in fc_entries if e["online"] == "online"][:4]
+                        for entry in online:
+                            short_file = entry["filename"][:60] if entry["filename"] else ""
+                            print(f"    {' ' * len(prefix)}  Host: {entry['host']:30s} {short_file}")
+                        if len(fc_entries) > 4:
+                            print(f"    {' ' * len(prefix)}  ... and {len(fc_entries) - 4} more links")
+                        sys.stdout.flush()
+
                 if not resolved:
                     remaining.append(url)
 
