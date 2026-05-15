@@ -134,33 +134,81 @@ def _is_ouo_domain(url: str) -> bool:
     return is_shortener_url(url)
 
 
-def resolve_ouo_url(url: str, timeout: int = 60) -> str | None:
-    """Resolve a ouo.io / oii.la / ouo.press URL using Playwright.
-
-    Uses a real browser with stealth techniques (human-like mouse movements,
-    overlay removal, multi-step follow) to automate ouo.io verification.
-
-    Args:
-        url: The shortener URL.
-        timeout: Max seconds per URL.
-
-    Returns:
-        Final destination URL, or None if failed.
-    """
-    _check_playwright()
+def _resolve_with_page(page, url: str, timeout: int) -> str | None:
+    """Resolve a single ouo.io URL using an existing Playwright page."""
     from playwright.sync_api import TimeoutError as PlaywrightTimeout
-    from playwright.sync_api import sync_playwright
 
-    logger.debug("Resolving ouo.io: %s", url)
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=20000)
+    except Exception as e:
+        logger.debug("Page load failed for %s: %s", url, e)
+        return None
+
+    max_steps = 5
+    for step in range(max_steps):
+        current = page.url
+        logger.debug("Step %s: %s", step + 1, current)
+
+        if not _is_ouo_domain(current):
+            return current
+
+        # Random mouse movements
+        for _ in range(random.randint(3, 5)):
+            page.mouse.move(
+                random.randint(100, 1100),
+                random.randint(100, 600),
+            )
+            time.sleep(random.uniform(0.05, 0.15))
+
+        # Wait for button to become active (up to 12s)
+        try:
+            page.wait_for_selector(
+                "#btn-main:not([disabled])",
+                timeout=12000,
+            )
+        except PlaywrightTimeout:
+            pass
+
+        # Remove overlays and click
+        clicked = _remove_overlays_and_click(page)
+        if not clicked:
+            logger.debug("No button found at step %s", step + 1)
+
+        # Wait for navigation
+        try:
+            page.wait_for_function(
+                f"() => window.location.href !== '{current}'",
+                timeout=10000,
+            )
+        except PlaywrightTimeout:
+            logger.debug("No navigation at step %s", step + 1)
+        time.sleep(0.5)
+
+    # After all steps, check final URL
+    final = page.url
+    if not _is_ouo_domain(final):
+        return final
+
+    # Last resort: scan page for target links
+    links = page.eval_on_selector_all(
+        "a[href]",
+        "els => els.map(e => e.href)",
+    )
+    for link in links:
+        if not _is_ouo_domain(link):
+            return link
+    return None
+
+
+def resolve_ouo_url(url: str, timeout: int = 60) -> str | None:
+    """Resolve a single ouo.io URL using Playwright (opens own browser)."""
+    _check_playwright()
+    from playwright.sync_api import sync_playwright
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch(
             headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-setuid-sandbox",
-                "--disable-dev-shm-usage",
-            ],
+            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
         )
         context = browser.new_context(
             viewport={"width": 1280, "height": 720},
@@ -171,68 +219,8 @@ def resolve_ouo_url(url: str, timeout: int = 60) -> str | None:
             ),
         )
         page = context.new_page()
-
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
-
-            max_steps = 5
-            for step in range(max_steps):
-                current = page.url
-                logger.debug("Step %s: %s", step + 1, current)
-
-                if not _is_ouo_domain(current):
-                    logger.debug("Resolved: %s", current)
-                    return current
-
-                # Random mouse movements before interacting
-                for _ in range(random.randint(3, 5)):
-                    page.mouse.move(
-                        random.randint(100, 1100),
-                        random.randint(100, 600),
-                    )
-                    time.sleep(random.uniform(0.1, 0.3))
-
-                # Wait for countdown timer
-                time.sleep(10)
-
-                # Remove overlays and click
-                clicked = _remove_overlays_and_click(page)
-                if not clicked:
-                    logger.debug("No button found at step %s", step + 1)
-
-                # Wait for navigation
-                try:
-                    page.wait_for_function(
-                        f"() => window.location.href !== '{current}'",
-                        timeout=timeout * 1000,
-                    )
-                except PlaywrightTimeout:
-                    logger.debug("No navigation at step %s", step + 1)
-
-                time.sleep(1)
-
-            # After all steps, check final URL
-            final_url = page.url
-            if not _is_ouo_domain(final_url):
-                logger.debug("Resolved: %s", final_url)
-                return final_url
-
-            # Last resort: scan page for target links
-            links = page.eval_on_selector_all(
-                "a[href]",
-                "els => els.map(e => e.href)",
-            )
-            for link in links:
-                if not _is_ouo_domain(link):
-                    logger.debug("Found target link: %s", link)
-                    return link
-
-            logger.debug("Failed to resolve after %s steps", max_steps)
-            return None
-
-        except Exception as e:
-            logger.debug("ouo.io resolution error: %s", e)
-            return None
+            return _resolve_with_page(page, url, timeout)
         finally:
             browser.close()
 
@@ -245,16 +233,14 @@ def resolve_ouo_url(url: str, timeout: int = 60) -> str | None:
 def resolve_shorteners(
     urls: list[str],
     timeout: int = 60,
-    max_workers: int = 2,
 ) -> dict[str, str]:
-    """Resolve multiple shortener URLs.
+    """Resolve multiple shortener URLs sequentially using a shared Playwright browser.
 
-    Uses Playwright-based bypass. Falls back to FlareSolverr if configured.
+    Falls back to FlareSolverr if configured and Playwright is unavailable.
 
     Args:
         urls: List of shortener URLs.
         timeout: Max seconds per URL.
-        max_workers: Max concurrent resolutions (each needs its own browser).
 
     Returns:
         Dict mapping original URLs to resolved URLs.
@@ -268,20 +254,46 @@ def resolve_shorteners(
     # Try Playwright first
     try:
         _check_playwright()
-        logger.info("Resolving %d URLs with Playwright...", len(urls))
-        from concurrent.futures import ThreadPoolExecutor, as_completed
+        total = len(urls)
+        import sys
 
-        def resolve_one(short_url: str) -> tuple[str, str]:
-            resolved = resolve_ouo_url(short_url, timeout)
-            return short_url, resolved or short_url
+        print(f"\n  Resolving {total} shortener URL(s) with Playwright...")
+        sys.stdout.flush()
 
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(resolve_one, u): u for u in urls}
-            for future in as_completed(futures):
-                original, resolved = future.result()
-                results[original] = resolved
-                if resolved == original:
-                    remaining.append(original)
+        from playwright.sync_api import sync_playwright
+
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+            )
+            context = browser.new_context(
+                viewport={"width": 1280, "height": 720},
+                user_agent=(
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/148.0.0.0 Safari/537.36"
+                ),
+            )
+
+            done = 0
+            for url in urls:
+                print(f"    [{done + 1}/{total}] Opening {url.rstrip('/').rsplit('/', 1)[-1][:25]}...", end=" ")
+                sys.stdout.flush()
+                page = context.new_page()
+                resolved = _resolve_with_page(page, url, timeout)
+                page.close()
+                result_url = resolved or url
+                results[url] = result_url
+                done += 1
+                status = "OK" if resolved else "SKIP"
+                print(f"{status} -> {result_url[:70] if resolved else 'unchanged'}")
+                sys.stdout.flush()
+                if not resolved:
+                    remaining.append(url)
+
+            context.close()
+            browser.close()
 
     except ImportError as e:
         logger.info("Playwright not available: %s", e)
