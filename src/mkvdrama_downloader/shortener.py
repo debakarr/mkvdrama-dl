@@ -18,6 +18,7 @@ import random  # noqa: S311 — human mouse simulation, not crypto
 import re
 import sys
 import time
+from collections.abc import Callable
 from typing import Any, Protocol
 from urllib.parse import urlparse
 
@@ -198,12 +199,18 @@ def _try_dcrypt_extraction(
 class ResolverStrategy(Protocol):
     """Protocol for a shortener URL resolution strategy.
 
-    Each strategy receives a single URL and returns the resolved URL,
-    or ``None`` if it could not resolve it.
+    Each strategy receives a single URL and an optional status callback,
+    and returns the resolved URL, or ``None`` if it could not resolve it.
     """
 
-    def __call__(self, url: str, /) -> str | None:
-        """Resolve *url* and return the final destination, or ``None``."""
+    def __call__(self, url: str, /, status: Callable[[str], None] | None = None) -> str | None:
+        """Resolve *url* and return the final destination, or ``None``.
+
+        Args:
+            url: The shortener URL to resolve.
+            status: Optional callback invoked with progress messages (e.g.
+                    ``"Loading page…"``) that the caller can display.
+        """
         ...
 
 
@@ -214,7 +221,7 @@ class NullResolver:
     This is the **Null Object** pattern — avoids ``if`` checks everywhere.
     """
 
-    def __call__(self, url: str, /) -> str | None:
+    def __call__(self, url: str, /, status: Callable[[str], None] | None = None) -> str | None:
         return url
 
 
@@ -227,7 +234,7 @@ class FlareSolverrResolver:
     def __init__(self, endpoint: str) -> None:
         self._endpoint = endpoint.rstrip("/")
 
-    def __call__(self, url: str, /) -> str | None:
+    def __call__(self, url: str, /, status: Callable[[str], None] | None = None) -> str | None:
         try:
             payload = {
                 "cmd": "request.get",
@@ -264,7 +271,7 @@ class CompositeResolver:
     def __init__(self, strategies: list[ResolverStrategy]) -> None:
         self._strategies = strategies
 
-    def __call__(self, url: str, /) -> str | None:
+    def __call__(self, url: str, /, status: Callable[[str], None] | None = None) -> str | None:
         for strategy in self._strategies:
             result = strategy(url)
             if result is not None and result != url:
@@ -336,10 +343,16 @@ def resolve_shorteners(
     for idx, url in enumerate(urls):
         short_id = url.rstrip("/").rsplit("/", 1)[-1][:25]
         prefix = f"    [{idx + 1}/{total}] {short_id}"
+
+        def step_status(msg: str, _p: str = prefix) -> None:
+            """Overwrite the current line with updated progress."""
+            print(f"\r{_p}  {msg}", end="")
+            sys.stdout.flush()
+
         print(f"{prefix}  Starting...", end="")
         sys.stdout.flush()
 
-        resolved = strategy(url)
+        resolved = strategy(url, status=step_status)
         result_url = resolved or url
         results[url] = result_url
 
@@ -373,7 +386,7 @@ def _has_playwright() -> bool:
 class _PlaywrightResolver:
     """Strategy that resolves ouo.io URLs using Playwright with stealth."""
 
-    def __call__(self, url: str, /) -> str | None:
+    def __call__(self, url: str, /, status: Callable[[str], None] | None = None) -> str | None:
         _check_playwright()
         from playwright.sync_api import sync_playwright
 
@@ -393,7 +406,7 @@ class _PlaywrightResolver:
                 )
                 page = context.new_page()
                 try:
-                    result = _resolve_with_page(page, url)
+                    result = _resolve_with_page(page, url, status=status)
                 finally:
                     page.close()
                     context.close()

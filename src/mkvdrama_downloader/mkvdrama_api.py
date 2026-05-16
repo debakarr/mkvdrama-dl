@@ -292,7 +292,7 @@ class MkvDramaApi:
             episodes_count=episodes_count,
         )
 
-    def _resolve_download_panel(self, slug: str) -> str | None:
+    def _resolve_download_panel(self, slug: str, retries: int = 2) -> str | None:
         """Execute the gate/pass API flow to get the download panel HTML.
 
         Flow:
@@ -300,7 +300,31 @@ class MkvDramaApi:
         2. POST {gatePath} → verification (sets cookies)
         3. POST {passPath} → {d, s} (encrypted HTML)
         4. Decrypt {d, s} with AES-256-GCM
+
+        Args:
+            slug: Drama URL slug.
+            retries: How many times to retry on failure (Cloudflare is fickle).
+
+        Returns:
+            Decrypted HTML or ``None``.
         """
+        import time as _time
+
+        for attempt in range(max(retries, 1)):
+            if attempt > 0:
+                _time.sleep(1.5 * attempt)
+                logger.info("Retrying gate/pass (attempt %d/%d)", attempt + 1, retries + 1)
+
+            result = self._try_gate_pass_once(slug)
+            if result is not None:
+                return result
+
+            logger.debug("Gate/pass attempt %d failed", attempt + 1)
+
+        return None
+
+    def _try_gate_pass_once(self, slug: str) -> str | None:
+        """Single attempt at the gate/pass flow."""
         try:
             init_url = f"{self._base_url}/{slug}/_jfsc_je_lou"
             logger.debug("Step 1: POST %s", init_url)
@@ -444,39 +468,59 @@ class MkvDramaApi:
     def _resolve_c_links(
         self,
         episodes: list[Episode],
+        retries: int = 2,
     ) -> None:
         """Resolve _c/ internal redirect links to actual shortener URLs.
 
         The _c/ links are internal proxy URLs that redirect to ouo.io or
         filecrypt. Following them through the authenticated session reveals
         the actual shortener URL.
+
+        Args:
+            episodes: List of episodes whose links to resolve.
+            retries: How many times to retry a failed _c/ resolution.
         """
+        import time as _time
+
         for episode in episodes:
             for link in episode.links:
                 if "/_c/" not in link.url:
                     continue
-                try:
-                    resp = self.session.get(
-                        link.url,
-                        allow_redirects=True,
-                        timeout=10,
-                        headers={
-                            "Referer": self._base_url + "/",
-                            "Accept": "text/html,*/*",
-                        },
-                    )
-                    if resp.status_code < 400 and resp.url != link.url:
-                        # Reject Cloudflare/Turnstile challenge URLs
-                        final = resp.url
-                        if "turnstile" not in final and "challenge" not in final and "_c/" not in final:
-                            logger.debug("Resolved _c/ link: %s -> %s", link.url, final)
-                            link.url = final
-                        else:
-                            logger.debug("Rejected _c/ resolution (challenge page): %s", final)
-                    elif resp.status_code == 403:
-                        logger.debug("_c/ link access denied (403): %s", link.url)
-                except Exception as e:
-                    logger.debug("Failed to resolve _c/ link %s: %s", link.url, e)
+
+                for attempt in range(max(retries, 1)):
+                    if attempt > 0:
+                        _time.sleep(1.0 * attempt)
+
+                    resolved = self._try_resolve_c_link(link.url)
+                    if resolved is not None:
+                        link.url = resolved
+                        break
+                else:
+                    logger.debug("_c/ link resolution exhausted: %s", link.url)
+
+    def _try_resolve_c_link(self, url: str) -> str | None:
+        """Single attempt to resolve a _c/ link to its real shortener URL."""
+        try:
+            resp = self.session.get(
+                url,
+                allow_redirects=True,
+                timeout=10,
+                headers={
+                    "Referer": self._base_url + "/",
+                    "Accept": "text/html,*/*",
+                },
+            )
+            if resp.status_code < 400 and resp.url != url:
+                final = resp.url
+                if "turnstile" not in final and "challenge" not in final and "_c/" not in final:
+                    logger.debug("Resolved _c/ link: %s -> %s", url, final)
+                    return final
+                logger.debug("Rejected _c/ resolution (challenge page): %s", final)
+            elif resp.status_code == 403:
+                logger.debug("_c/ link access denied (403): %s", url)
+        except Exception as e:
+            logger.debug("Failed to resolve _c/ link %s: %s", url, e)
+        return None
 
     def _parse_download_section(
         self,
