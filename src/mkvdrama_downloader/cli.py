@@ -4,6 +4,7 @@ Usage:
     mkvdrama search <query>
     mkvdrama dl <url_or_query>
     mkvdrama dl <url_or_query> --episode 1-5
+    mkvdrama dl <url_or_query> --resolve --jd
 """
 
 from __future__ import annotations
@@ -14,7 +15,10 @@ import os
 import click
 
 from mkvdrama_downloader import __version__
-from mkvdrama_downloader.downloader import format_episode_output
+from mkvdrama_downloader.downloader import (
+    format_episode_output,
+    write_organized_link_files,
+)
 from mkvdrama_downloader.jd import find_crawljob_dir, write_crawljob
 from mkvdrama_downloader.mkvdrama_api import MkvDramaApi
 
@@ -110,8 +114,9 @@ def search(ctx: click.Context, query: str) -> None:
     "--output-dir",
     "-o",
     default=None,
-    help="Directory to save link files",
+    help="Save per-host-domain link files to this directory (default: ~/Downloads/mkvdrama-dl/)",
     type=click.Path(file_okay=False, dir_okay=True),
+    envvar="MKVDRAMA_DOWNLOADS_DIR",
 )
 @click.option(
     "--flaresolverr",
@@ -241,20 +246,63 @@ def dl(
     if resolve or flaresolverr or os.getenv("FLARESOLVERR_URL"):
         api.resolve_episode_shorteners(episodes, resolve=resolve)
 
+    # Collect resolved URLs and extract dcrypt.it direct links
+    resolved_urls = _collect_resolved_urls(episodes)
+    direct_links = _collect_direct_links(resolved_urls)
+
     click.echo(f"\nEpisodes: {len(episodes)}")
     format_episode_output(drama, episodes, output_dir=output_dir)
 
     total_links = sum(len(e.links) for e in episodes)
     click.echo(click.style(f"\nTotal download links found: {total_links}", bold=True))
 
+    # ── Write organized host-domain files ─────────────────────────────
+    out_dir = output_dir or os.getenv("MKVDRAMA_DOWNLOADS_DIR")
+    if out_dir or direct_links:
+        _ = write_organized_link_files(
+            drama.title or drama_title,
+            resolved_urls,
+            direct_links,
+            output_dir=out_dir,
+        )
+
     # ── JDownloader2 integration ──────────────────────────────────────
     if jd:
-        _send_to_jdownloader(episodes, jd_dir)
+        _send_to_jdownloader(episodes, jd_dir, resolved_urls)
+
+
+def _collect_resolved_urls(episodes: list) -> list[str]:
+    """Collect unique resolved download URLs from all episodes."""
+    seen: set[str] = set()
+    urls: list[str] = []
+    for ep in episodes:
+        for link in ep.links:
+            url = link.url
+            if url and url.startswith(("http://", "https://")) and url not in seen:
+                seen.add(url)
+                urls.append(url)
+    return urls
+
+
+def _collect_direct_links(resolved_urls: list[str]) -> list[str]:
+    """Extract direct download links (dcrypt.it) from resolved filecrypt URLs."""
+    from mkvdrama_downloader.shortener import extract_filecrypt_links, is_filecrypt_url
+
+    direct_links: list[str] = []
+    for url in resolved_urls:
+        if not is_filecrypt_url(url):
+            continue
+        entries = extract_filecrypt_links(url)
+        for entry in entries:
+            if entry.get("host") == "dcrypt.it":
+                direct_links.extend(entry.get("dcrypt_links", []))
+    return direct_links
 
 
 def _send_to_jdownloader(
     episodes: list,
     jd_dir: str | None,
+    resolved_urls: list[str] | None = None,
 ) -> None:
     """Send resolved episode URLs to JDownloader2 LinkGrabber."""
     crawljob_dir = jd_dir or find_crawljob_dir()
@@ -268,16 +316,7 @@ def _send_to_jdownloader(
         )
         return
 
-    # Collect unique resolved URLs
-    urls: list[str] = []
-    seen: set[str] = set()
-    for ep in episodes:
-        for link in ep.links:
-            url = link.url
-            if url and url.startswith(("http://", "https://")) and url not in seen:
-                seen.add(url)
-                urls.append(url)
-
+    urls = resolved_urls if resolved_urls is not None else _collect_resolved_urls(episodes)
     if not urls:
         click.echo(click.style("  ⚠ No URLs to send to JDownloader2.", **_STYLE_WARN))
         return

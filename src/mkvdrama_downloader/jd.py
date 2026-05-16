@@ -92,10 +92,8 @@ def write_crawljob(urls: list[str], output_dir: str | Path | None = None) -> Pat
     dst = target / f"mkvdrama_{ts}.crawljob"
 
     with open(dst, "w", encoding="utf-8", newline="") as f:
-        f.write("[{\n")
         for url in urls:
             f.write(f"url = {url}\n")
-        f.write("}]\n")
 
     logger.info("Wrote crawljob: %s (%d URLs)", dst, len(urls))
     return dst

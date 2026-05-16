@@ -6,12 +6,23 @@ Collects download links from mkvdrama.net and outputs them.
 from __future__ import annotations
 
 import logging
+import os
 import re
+from collections import defaultdict
 from pathlib import Path
+from urllib.parse import urlparse
 
 from mkvdrama_downloader.models.drama import Drama, Episode
 
 logger = logging.getLogger(__name__)
+
+# Default download directory — overridable via ``MKVDRAMA_DOWNLOADS_DIR``.
+_DEFAULT_DOWNLOADS_DIR = os.path.join(os.path.expanduser("~"), "Downloads", "mkvdrama-dl")
+
+
+def _default_output_dir() -> str:
+    """Return the default download directory, falling back to env var / standard path."""
+    return os.getenv("MKVDRAMA_DOWNLOADS_DIR") or _DEFAULT_DOWNLOADS_DIR
 
 
 def _links_key(ep: Episode) -> str:
@@ -123,6 +134,74 @@ def _format_ep_range(nums: list[int]) -> str:
             parts.append(f"{s}-{e}")
 
     return ", ".join(parts)
+
+
+def write_organized_link_files(
+    drama_title: str,
+    urls: list[str],
+    direct_links: list[str],
+    output_dir: str | Path | None = None,
+) -> Path | None:
+    """Write per-host-domain link files into a drama-named subfolder.
+
+    Creates ``{output_dir}/{drama_title}/`` with one ``.txt`` file per
+    host domain (``mega.nz.txt``, ``pixeldrain.com.txt``, …), plus a
+    combined ``all_links.txt``.
+
+    Args:
+        drama_title: Used for the subfolder name.
+        urls: Resolved shortener URLs (filecrypt.cc etc.).
+        direct_links: Direct download links from dcrypt.it resolution.
+        output_dir: Root output directory (auto-detected defaults to
+                    ``~/Downloads/mkvdrama-dl/``).
+
+    Returns:
+        Path of the created drama folder, or ``None`` if nothing was written.
+    """
+    if not urls and not direct_links:
+        return None
+
+    root = Path(output_dir) if output_dir else Path(_default_output_dir())
+    drama_folder = root / _sanitize_filename(drama_title)
+    drama_folder.mkdir(parents=True, exist_ok=True)
+
+    # ── Group direct links by host domain ────────────────────────────
+    by_host: dict[str, list[str]] = defaultdict(list)
+    for link in direct_links:
+        host = urlparse(link).netloc or "unknown"
+        by_host[host].append(link)
+
+    # ── Write one file per host domain ───────────────────────────────
+    for host, host_urls in sorted(by_host.items()):
+        host_file = drama_folder / f"{host}.txt"
+        with open(host_file, "w", encoding="utf-8", newline="") as f:
+            for url in sorted(host_urls):
+                f.write(f"{url}\n")
+
+        count_str = f"{len(host_urls)} link(s)"
+        print(f"    [Links saved to: {host_file}  ({count_str})]")
+
+    # ── Write combined all-links file ────────────────────────────────
+    all_file = drama_folder / "all_links.txt"
+    with open(all_file, "w", encoding="utf-8", newline="") as f:
+        for link in direct_links:
+            f.write(f"{link}\n")
+        if urls:
+            f.write("\n# --- Resolved container URLs ---\n")
+            for url in urls:
+                f.write(f"{url}\n")
+
+    print(f"    [All links saved to: {all_file}]")
+
+    # ── Write filecrypt URLs separately ──────────────────────────────
+    if urls:
+        fc_file = drama_folder / "filecrypt_container.txt"
+        with open(fc_file, "w", encoding="utf-8", newline="") as f:
+            for url in urls:
+                f.write(f"{url}\n")
+        print(f"    [Container URLs saved to: {fc_file}]")
+
+    return drama_folder
 
 
 def _sanitize_filename(name: str) -> str:
