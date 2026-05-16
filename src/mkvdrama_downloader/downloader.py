@@ -82,7 +82,7 @@ def format_episode_output(
                 _print_links(ep.links)
 
 
-def _print_links(links, file=None):
+def _print_links(links: list, file=None) -> None:
     """Print download links, optionally writing to a file."""
     for link in links:
         quality = f" [{link.quality}]" if link.quality else ""

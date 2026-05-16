@@ -10,14 +10,11 @@ from pydantic import BaseModel, RootModel
 class DramaInfo(BaseModel):
     """A single search result item."""
 
-    id: int | None = None
     title: str = ""
     url: str | None = None
-    year: int | None = None
     poster: str | None = None
     episodes_count: int | None = None
     country: str | None = None
-    status: str | None = None
 
     model_config = {"from_attributes": True, "extra": "ignore"}
 

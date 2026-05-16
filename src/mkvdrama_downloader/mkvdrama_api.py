@@ -84,24 +84,23 @@ def _hex_to_bytes(hex_str: str) -> bytes:
     return bytes.fromhex(hex_str)
 
 
-def _attr_str(el: Tag, attr: str, default: str = "") -> str:
-    """Safely get a string attribute from a BeautifulSoup element."""
+def _attr_str(el: Tag, attr: str, default: str | None = "") -> str | None:
+    """Safely get a string attribute from a BeautifulSoup element.
+
+    Args:
+        el: BeautifulSoup Tag element.
+        attr: Attribute name to extract.
+        default: Default if not found — empty string ``""`` or ``None``.
+
+    Returns the attribute value if present and non-empty, else *default*.
+    """
     val = el.get(attr)
     if isinstance(val, str):
-        return val
+        return val or default
     if isinstance(val, list):
-        return " ".join(val)
+        joined = " ".join(val)
+        return joined or default
     return default
-
-
-def _attr_str_opt(el: Tag, attr: str) -> str | None:
-    """Safely get an optional string attribute from a BeautifulSoup element."""
-    val = el.get(attr)
-    if isinstance(val, str) and val:
-        return val
-    if isinstance(val, list) and val:
-        return " ".join(val)
-    return None
 
 
 class MkvDramaApi:
@@ -154,7 +153,7 @@ class MkvDramaApi:
             img = article.select_one("img")
             poster: str | None = None
             if isinstance(img, Tag):
-                poster = _attr_str_opt(img, "data-src") or _attr_str_opt(img, "src")
+                poster = _attr_str(img, "data-src", None) or _attr_str(img, "src", None)
 
             country_el = article.select_one(".country")
             country = country_el.get_text(strip=True) if isinstance(country_el, Tag) else None
@@ -212,7 +211,7 @@ class MkvDramaApi:
                 img = soup.select_one(".thumb img")
                 poster: str | None = None
                 if isinstance(img, Tag):
-                    poster = _attr_str_opt(img, "src")
+                    poster = _attr_str(img, "src", None)
 
                 return DramaInfo(
                     title=title,
@@ -259,7 +258,7 @@ class MkvDramaApi:
         img = soup.select_one(".thumb img")
         poster: str | None = None
         if isinstance(img, Tag):
-            poster = _attr_str_opt(img, "src")
+            poster = _attr_str(img, "src")
 
         country = None
         status = None
@@ -404,15 +403,21 @@ class MkvDramaApi:
         episodes = sorted(seen_episodes.values(), key=lambda e: e.number)
         return episodes
 
-    def resolve_episode_shorteners(self, episodes: list[Episode]) -> None:
-        """Resolve ouo.io/oii.la shortener URLs using Playwright/FlareSolverr."""
-        from mkvdrama_downloader.shortener import (
-            is_flaresolverr_configured,
-            is_shortener_url,
-            resolve_shorteners,
-        )
+    def resolve_episode_shorteners(
+        self,
+        episodes: list[Episode],
+        *,
+        resolve: bool = False,
+    ) -> None:
+        """Resolve ouo.io/oii.la shortener URLs using Playwright/FlareSolverr.
 
-        resolve_enabled = self._flaresolverr_url or is_flaresolverr_configured() or os.getenv("MKVDRAMA_RESOLVE") == "1"
+        Args:
+            episodes: Episode list whose links to resolve.
+            resolve: Force resolution even without FlareSolverr configured.
+        """
+        from mkvdrama_downloader.shortener import is_shortener_url, resolve_shorteners
+
+        resolve_enabled = resolve or bool(self._flaresolverr_url)
         if not resolve_enabled:
             return
 
@@ -427,7 +432,7 @@ class MkvDramaApi:
         if not urls:
             return
 
-        logger.info("Resolving %d shortener URLs via FlareSolverr...", len(urls))
+        logger.info("Resolving %d shortener URLs...", len(urls))
         resolved = resolve_shorteners(urls)
 
         for episode in episodes:
@@ -503,7 +508,7 @@ class MkvDramaApi:
                 host_el = link_box.select_one("[data-oc2le], [data-07cgr]")
                 host: str | None = None
                 if isinstance(host_el, Tag):
-                    host = _attr_str_opt(host_el, "data-oc2le") or _attr_str_opt(host_el, "data-07cgr")
+                    host = _attr_str(host_el, "data-oc2le", None) or _attr_str(host_el, "data-07cgr", None)
 
                 dl = DownloadLink(
                     url=href,
@@ -550,7 +555,7 @@ class MkvDramaApi:
         if isinstance(parent, Tag):
             host_el = parent.select_one("[data-oc2le], [data-07cgr]")
             if isinstance(host_el, Tag):
-                host = _attr_str_opt(host_el, "data-oc2le") or _attr_str_opt(host_el, "data-07cgr")
+                host = _attr_str(host_el, "data-oc2le") or _attr_str(host_el, "data-07cgr")
 
         dl = DownloadLink(
             url=token_url,

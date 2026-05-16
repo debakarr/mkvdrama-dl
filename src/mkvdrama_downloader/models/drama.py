@@ -27,7 +27,6 @@ class Episode(BaseModel):
 class Drama(BaseModel):
     """Full drama detail including episodes."""
 
-    id: int | None = None
     title: str = ""
     slug: str = ""
     url: str = ""

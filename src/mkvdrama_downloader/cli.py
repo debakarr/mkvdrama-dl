@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 import os
-import sys
 
 import click
 
@@ -19,6 +18,13 @@ from mkvdrama_downloader.downloader import format_episode_output
 from mkvdrama_downloader.mkvdrama_api import MkvDramaApi
 
 logger = logging.getLogger(__name__)
+
+# ── Color palette ──────────────────────────────────────────────────────
+_STYLE_ERROR = {"fg": "red", "bold": True}
+_STYLE_WARN = {"fg": "yellow"}
+_STYLE_OK = {"fg": "green"}
+_STYLE_TITLE = {"fg": "cyan", "bold": True}
+_STYLE_HINT = {"dim": True}
 
 
 def _setup_logging(verbosity: int) -> None:
@@ -60,7 +66,8 @@ def mkvdrama(ctx: click.Context, verbose: int) -> None:
     Note: This tool scrapes download links (ouo.io, filecrypt). Actual file
     downloads require resolving the shortener links.
 
-    Set MKVDRAMA_COOKIE env var for Cloudflare bypass (optional).
+    The MKVDRAMA_COOKIE environment variable can be set to a cf_clearance
+    cookie value for Cloudflare bypass (optional).
     """
     _setup_logging(verbose)
     ctx.obj = {}
@@ -75,18 +82,19 @@ def search(ctx: click.Context, query: str) -> None:
     results = api.search_dramas(query)
 
     if not results:
-        print(f"No results found for '{query}'.")
-        sys.exit(1)
+        raise click.ClickException(click.style(f"No results found for '{query}'.", **_STYLE_ERROR))
 
-    print(f"\nSearch results for '{query}':")
-    print("=" * 60)
+    click.echo(click.style(f"\nSearch results for '{query}':", bold=True))
+    click.echo("=" * 60)
 
     for i, drama in enumerate(results, 1):
-        ep_info = f" ({drama.episodes_count} eps)" if drama.episodes_count else ""
-        country = f" [{drama.country}]" if drama.country else ""
-        status = f" - {drama.status}" if drama.status else ""
-        print(f"  {i:2d}. {drama.title}{ep_info}{country}{status}")
-        print(f"      {drama.url}")
+        parts = [f"  {i:2d}. {drama.title}"]
+        if drama.episodes_count:
+            parts.append(click.style(f"({drama.episodes_count} eps)", **_STYLE_HINT))
+        if drama.country:
+            parts.append(click.style(f"[{drama.country}]", **_STYLE_OK))
+        click.echo(" ".join(parts))
+        click.echo(f"      {drama.url}")
 
 
 @mkvdrama.command()
@@ -141,36 +149,23 @@ def dl(
     """
     api = _get_api(ctx)
 
-    # Override FlareSolverr URL from --flaresolverr flag if provided
-    if flaresolverr:
-        import os as _os
-
-        _os.environ["FLARESOLVERR_URL"] = flaresolverr.rstrip("/")
-
-    # Enable shortener resolution
-    if resolve:
-        import os as _os
-
-        _os.environ["MKVDRAMA_RESOLVE"] = "1"
-
     # Determine if input is URL or search query
-    is_url = drama_url_or_query.startswith("http://") or drama_url_or_query.startswith("https://")
+    is_url = drama_url_or_query.startswith(("http://", "https://"))
 
     if not is_url:
         # Search first
         results = api.search_dramas(drama_url_or_query)
         if not results:
-            print(f"No results found for '{drama_url_or_query}'.")
-            sys.exit(1)
+            raise click.ClickException(click.style(f"No results found for '{drama_url_or_query}'.", **_STYLE_ERROR))
 
         if len(results) == 1:
             drama_url: str = results[0].url or ""
             drama_title = results[0].title
         else:
-            print(f"\nMultiple results for '{drama_url_or_query}':")
+            click.echo(click.style(f"\nMultiple results for '{drama_url_or_query}':", bold=True))
             for i, r in enumerate(results, 1):
-                print(f"  {i}. {r.title}")
-            print()
+                click.echo(f"  {i}. {r.title}")
+            click.echo("")
             choice = click.prompt(
                 "Select a drama (number)",
                 type=click.IntRange(1, len(results)),
@@ -180,21 +175,24 @@ def dl(
             drama_title = selected.title
 
         if not drama_url:
-            print("No valid URL found for selected drama.")
-            sys.exit(1)
+            raise click.ClickException(click.style("No valid URL found for selected drama.", **_STYLE_ERROR))
     else:
         drama_url = drama_url_or_query.rstrip("/")
         drama_title = drama_url.rsplit("/", 1)[-1].replace("-", " ").title()
 
-    print(f"\nFetching: {drama_title}")
-    print(f"  {drama_url}")
+    click.echo(click.style(f"\nFetching: {drama_title}", **_STYLE_TITLE))
+    click.echo(f"  {drama_url}")
 
     drama = api.get_drama(drama_url)
 
     if not drama.episodes:
-        print("\nNo download links found. This may be due to Cloudflare protection.")
-        print("Try setting MKVDRAMA_COOKIE with a valid cf_clearance cookie.")
-        sys.exit(1)
+        raise click.ClickException(
+            click.style(
+                "\nNo download links found. This may be due to Cloudflare protection.\n"
+                "Try setting MKVDRAMA_COOKIE with a valid cf_clearance cookie.",
+                **_STYLE_ERROR,
+            )
+        )
 
     # Filter episodes by range
     episodes = drama.episodes
@@ -203,17 +201,16 @@ def dl(
         if selected_nums:
             episodes = [e for e in episodes if e.number in selected_nums]
         else:
-            print(f"Invalid episode range: {episode}")
-            sys.exit(1)
+            raise click.UsageError(click.style(f"Invalid episode range: {episode}", **_STYLE_ERROR))
 
-    print(f"\nDrama: {drama.title}")
+    click.echo(click.style(f"\nDrama: {drama.title}", **_STYLE_TITLE))
     if drama.country:
-        print(f"Country: {drama.country}")
+        click.echo(f"Country: {drama.country}")
     if drama.status:
-        print(f"Status: {drama.status}")
+        click.echo(f"Status: {drama.status}")
     if drama.synopsis:
         synopsis_short = drama.synopsis[:150] + "..." if len(drama.synopsis) > 150 else drama.synopsis
-        print(f"Synopsis: {synopsis_short}")
+        click.echo(f"Synopsis: {synopsis_short}")
 
     # Filter by quality/resolution if specified (BEFORE resolving shorteners)
     if quality:
@@ -224,13 +221,13 @@ def dl(
 
     # Resolve shorteners AFTER filtering (only unique URLs needed)
     if resolve or flaresolverr or os.getenv("FLARESOLVERR_URL"):
-        api.resolve_episode_shorteners(episodes)
+        api.resolve_episode_shorteners(episodes, resolve=resolve)
 
-    print(f"\nEpisodes: {len(episodes)}")
+    click.echo(f"\nEpisodes: {len(episodes)}")
     format_episode_output(drama, episodes, output_dir=output_dir)
 
     total_links = sum(len(e.links) for e in episodes)
-    print(f"\nTotal download links found: {total_links}")
+    click.echo(click.style(f"\nTotal download links found: {total_links}", bold=True))
 
 
 def _parse_episode_range(range_str: str, max_ep: int) -> set[int]:
