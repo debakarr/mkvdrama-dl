@@ -15,6 +15,7 @@ import click
 
 from mkvdrama_downloader import __version__
 from mkvdrama_downloader.downloader import format_episode_output
+from mkvdrama_downloader.jd import find_crawljob_dir, write_crawljob
 from mkvdrama_downloader.mkvdrama_api import MkvDramaApi
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,21 @@ def search(ctx: click.Context, query: str) -> None:
     metavar="QUALITY",
     help="Filter by resolution: 540p, 720p, 1080p, 1080pHD (can specify multiple: 720p,1080p)",
 )
+@click.option(
+    "--jd",
+    "--jdownloader",
+    is_flag=True,
+    default=False,
+    help="Forward resolved URLs to JDownloader2 LinkGrabber (via .crawljob file)",
+)
+@click.option(
+    "--jd-dir",
+    envvar="JD2_CRAWLJOB_DIR",
+    default=None,
+    metavar="DIR",
+    help="JDownloader2 crawljob folder (auto-detected if omitted)",
+    type=click.Path(file_okay=False, dir_okay=True),
+)
 @click.pass_context
 def dl(
     ctx: click.Context,
@@ -141,6 +157,8 @@ def dl(
     flaresolverr: str | None,
     resolve: bool,
     quality: str | None,
+    jd: bool,
+    jd_dir: str | None,
 ) -> None:
     """Download or list drama episodes from mkvdrama.net.
 
@@ -228,6 +246,45 @@ def dl(
 
     total_links = sum(len(e.links) for e in episodes)
     click.echo(click.style(f"\nTotal download links found: {total_links}", bold=True))
+
+    # ── JDownloader2 integration ──────────────────────────────────────
+    if jd:
+        _send_to_jdownloader(episodes, jd_dir)
+
+
+def _send_to_jdownloader(
+    episodes: list,
+    jd_dir: str | None,
+) -> None:
+    """Send resolved episode URLs to JDownloader2 LinkGrabber."""
+    crawljob_dir = jd_dir or find_crawljob_dir()
+    if not crawljob_dir:
+        click.echo(
+            click.style(
+                "  ⚠ Could not find JDownloader2 crawljob folder.\n"
+                "    Set JD2_CRAWLJOB_DIR or use --jd-dir to point at it.",
+                **_STYLE_WARN,
+            )
+        )
+        return
+
+    # Collect unique resolved URLs
+    urls: list[str] = []
+    seen: set[str] = set()
+    for ep in episodes:
+        for link in ep.links:
+            url = link.url
+            if url and url.startswith(("http://", "https://")) and url not in seen:
+                seen.add(url)
+                urls.append(url)
+
+    if not urls:
+        click.echo(click.style("  ⚠ No URLs to send to JDownloader2.", **_STYLE_WARN))
+        return
+
+    result = write_crawljob(urls, crawljob_dir)
+    if result:
+        click.echo(click.style(f"  ✓ Sent {len(urls)} URL(s) to JDownloader2 LinkGrabber", **_STYLE_OK))
 
 
 def _parse_episode_range(range_str: str, max_ep: int) -> set[int]:
