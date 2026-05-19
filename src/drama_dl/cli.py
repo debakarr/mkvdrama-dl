@@ -353,7 +353,7 @@ def _send_to_jdownloader(
     if not crawljob_dir:
         click.echo(
             click.style(
-                "  ⚠ Could not find JDownloader2 crawljob folder.\n"
+                "  [WARN] Could not find JDownloader2 crawljob folder.\n"
                 "    Set JD2_CRAWLJOB_DIR or use --jd-dir to point at it.",
                 **_STYLE_WARN,
             )
@@ -362,12 +362,12 @@ def _send_to_jdownloader(
 
     urls = resolved_urls if resolved_urls is not None else _collect_resolved_urls(episodes)
     if not urls:
-        click.echo(click.style("  ⚠ No URLs to send to JDownloader2.", **_STYLE_WARN))
+        click.echo(click.style("  [WARN] No URLs to send to JDownloader2.", **_STYLE_WARN))
         return
 
     result = write_crawljob(urls, crawljob_dir)
     if result:
-        click.echo(click.style(f"  ✓ Sent {len(urls)} URL(s) to JDownloader2 LinkGrabber", **_STYLE_OK))
+        click.echo(click.style(f"  [OK] Sent {len(urls)} URL(s) to JDownloader2 LinkGrabber", **_STYLE_OK))
 
 
 def _parse_episode_range(range_str: str, max_ep: int) -> set[int]:
