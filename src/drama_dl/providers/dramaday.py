@@ -3,8 +3,9 @@
 WordPress site with Cloudflare protection.  No gate/pass API — all download
 links are directly in the HTML page inside a Supsystic table.
 
-Uses curl-cffi for Cloudflare bypass.  Falls back to FlareSolverr when
-configured.  When both fail, shows a helpful error message.
+Uses curl-cffi for Cloudflare bypass.  Falls back to Chrome CDP (launches
+real Chrome to solve Cloudflare challenge), then FlareSolverr.  When all
+methods fail, shows a helpful error message.
 """
 
 from __future__ import annotations
@@ -62,6 +63,7 @@ class DramadayProvider(DramaProvider):
         self,
         cookie_string: str | None = None,
         flaresolverr_url: str | None = None,
+        use_cdp: bool | None = None,
     ) -> None:
         # curl-cffi impersonates Chrome TLS fingerprint.
         self.session = curl_requests.Session(impersonate="chrome131")
@@ -74,8 +76,16 @@ class DramadayProvider(DramaProvider):
         self._flaresolverr_url = flaresolverr_url or os.getenv("FLARESOLVERR_URL", "")
         self._base_url = "https://dramaday.me"
 
+        # CDP bypass: launch real Chrome to solve Cloudflare challenge.
+        # Enabled by default; disable via use_cdp=False or DRAMADAY_NO_CDP=1.
+        if use_cdp is None:
+            self._use_cdp = not os.getenv("DRAMADAY_NO_CDP", "")
+        else:
+            self._use_cdp = use_cdp
+        self._cdp_cookie_obtained = False  # Track if we've already done CDP
+
     def _get(self, url: str, timeout: int = 30) -> str | None:
-        """Fetch a URL, trying curl-cffi first then FlareSolverr.
+        """Fetch a URL, trying curl-cffi first then Chrome CDP then FlareSolverr.
 
         Returns the HTML text, or ``None`` if all methods fail.
         """
@@ -86,6 +96,21 @@ class DramadayProvider(DramaProvider):
                 return resp.text
         except Exception as e:
             logger.debug("curl-cffi failed: %s", e)
+
+        # Try Chrome CDP bypass (launches real Chrome to solve Cloudflare)
+        if self._use_cdp and not self._cdp_cookie_obtained:
+            cf_cookie = self._try_cdp_bypass(url)
+            if cf_cookie:
+                # Inject cookie into curl-cffi session for subsequent requests
+                self.session.headers["Cookie"] = f"cf_clearance={cf_cookie}"
+                self._cdp_cookie_obtained = True
+                # Retry with the new cookie
+                try:
+                    resp = self.session.get(url, timeout=timeout)
+                    if resp.status_code == 200 and "Just a moment" not in resp.text:
+                        return resp.text
+                except Exception as e:
+                    logger.debug("curl-cffi with CDP cookie failed: %s", e)
 
         # Try FlareSolverr
         if self._flaresolverr_url:
@@ -110,6 +135,13 @@ class DramadayProvider(DramaProvider):
                 logger.debug("FlareSolverr failed: %s", e)
 
         return None
+
+    def _try_cdp_bypass(self, url: str) -> str | None:
+        """Attempt to obtain cf_clearance via Chrome CDP."""
+        from drama_dl.cdp_bypass import get_cf_clearance
+
+        logger.info("Attempting Chrome CDP Cloudflare bypass...")
+        return get_cf_clearance(url, timeout=30)
 
     def search(self, query: str) -> Search:
         """Search for dramas via WordPress search."""
@@ -190,12 +222,15 @@ class DramadayProvider(DramaProvider):
 
         html = self._get(url, timeout=30)
         if html is None:
+            cdp_hint = "" if self._use_cdp else " (CDP bypass disabled)"
             raise RuntimeError(
-                "dramaday.me is blocking automated requests (Cloudflare).\n"
+                "dramaday.me is blocking automated requests (Cloudflare)."
+                f"{cdp_hint}\n"
                 "Options:\n"
-                "  1. Set FLARESOLVERR_URL to a running FlareSolverr instance\n"
-                "  2. Set DRAMADAY_COOKIE with a valid cf_clearance cookie\n"
-                "  3. Use mkvdrama.net instead (better automated support)"
+                "  1. Ensure Chrome is installed (CDP bypass launches real Chrome)\n"
+                "  2. Set FLARESOLVERR_URL to a running FlareSolverr instance\n"
+                "  3. Set DRAMADAY_COOKIE with a valid cf_clearance cookie\n"
+                "  4. Use mkvdrama.net instead (better automated support)"
             )
 
         soup = BeautifulSoup(html, "html.parser")

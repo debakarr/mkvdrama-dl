@@ -283,7 +283,10 @@ def dl(
     if quality:
         qualities = [q.strip().lower() for q in quality.split(",")]
         for ep in episodes:
-            ep.links = [ln for ln in ep.links if (ln.quality or "").lower() in qualities]
+            ep.links = [
+                ln for ln in ep.links
+                if any(q in (ln.quality or "").lower() for q in qualities)
+            ]
         episodes = [ep for ep in episodes if ep.links]
 
     # Resolve shorteners AFTER filtering

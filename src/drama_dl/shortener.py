@@ -377,8 +377,9 @@ def resolve_shorteners(
     sys.stdout.flush()
 
     for idx, url in enumerate(remaining):
-        short_id = url.rstrip("/").rsplit("/", 1)[-1][:25]
-        prefix = f"    [{idx + 1}/{total}] {short_id}"
+        # Show full URL (truncate to 60 chars for display)
+        display_url = url if len(url) <= 60 else url[:57] + "..."
+        prefix = f"    [{idx + 1}/{total}] {display_url}"
 
         def step_status(msg: str, _p: str = prefix) -> None:
             """Overwrite the current line with updated progress."""
