@@ -1,7 +1,7 @@
 [project]
-name = "mkvdrama-downloader"
-version = "0.1.0"
-description = "Downloader for https://mkvdrama.net/ - scrape download links for Asian dramas"
+name = "drama-dl"
+version = "0.2.0"
+description = "Downloader for Asian drama sites — mkvdrama.net, dramaday.me, and more"
 readme = "README.md"
 authors = [{ name = "Debakar Roy", email = "allinonedibakar@gmail.com" }]
 requires-python = ">=3.10"
@@ -21,6 +21,7 @@ dependencies = [
 
 
 [project.scripts]
+drama = "drama_dl.cli:drama"
 mkvdrama = "mkvdrama_downloader.cli:mkvdrama"
 
 [dependency-groups]
@@ -56,6 +57,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101"]
 "src/mkvdrama_downloader/shortener.py" = ["S311"]
+"src/drama_dl/shortener.py" = ["S311"]
 
 [tool.ruff.format]
 quote-style = "double"
