@@ -30,7 +30,7 @@ from bs4 import BeautifulSoup, Tag
 
 logger = logging.getLogger(__name__)
 
-SHORTENER_DOMAINS = ["ouo.io", "oii.la", "ouo.press", "exe.io", "cutw.in"]
+SHORTENER_DOMAINS = ["ouo.io", "oii.la", "ouo.press", "exe.io", "exeygo.com", "cutw.in"]
 FILECRYPT_DOMAIN = "filecrypt.cc"
 
 FLARESOLVERR_URL = os.getenv("FLARESOLVERR_URL", "").rstrip("/") or ""
@@ -421,11 +421,17 @@ def _has_playwright() -> bool:
 
 
 class _PlaywrightResolver:
-    """Strategy that resolves shortener URLs using Playwright with stealth."""
+    """Strategy that resolves shortener URLs using Playwright with modular solvers.
+
+    Uses the redirect_solvers registry to dispatch each URL to the appropriate
+    solver based on its domain.
+    """
 
     def __call__(self, url: str, /, status: Callable[[str], None] | None = None) -> str | None:
         _check_playwright()
         from playwright.sync_api import sync_playwright
+
+        from drama_dl.redirect_solvers import get_solver
 
         try:
             with sync_playwright() as pw:
@@ -443,7 +449,7 @@ class _PlaywrightResolver:
                 )
                 page = context.new_page()
                 try:
-                    result = _resolve_with_page(page, url, status=status)
+                    result = _resolve_with_solvers(page, url, status=status)
                 finally:
                     page.close()
                     context.close()
@@ -455,18 +461,19 @@ class _PlaywrightResolver:
 
 
 # ---------------------------------------------------------------------------
-# Playwright page-level helpers
+# Playwright page-level helpers — dispatches to modular redirect solvers
 # ---------------------------------------------------------------------------
 
 
-def _resolve_with_page(page, url: str, status=None) -> str | None:
-    """Resolve a single shortener URL using an existing Playwright page.
+def _resolve_with_solvers(page, url: str, status=None) -> str | None:
+    """Resolve a shortener URL using the modular redirect solver registry.
 
     Args:
         page: Playwright page object.
         url: URL to resolve.
         status: Optional ``fn(msg)`` called at each step for progress.
     """
+    from drama_dl.redirect_solvers import get_solver
 
     def _status(msg):
         if status:
@@ -474,64 +481,18 @@ def _resolve_with_page(page, url: str, status=None) -> str | None:
         else:
             logger.debug(msg)
 
-    from playwright.sync_api import TimeoutError as PlaywrightTimeout
-
     # Skip oii.la — complex multi-page redirect chain
     if "oii.la" in url:
         return None
 
-    _status("Loading page...")
-    try:
-        page.goto(url, wait_until="domcontentloaded", timeout=20000)
-    except Exception as e:
-        logger.debug("Page load failed for %s: %s", url, e)
+    # Get the appropriate solver for this URL
+    solver = get_solver(url)
+    if solver is None:
+        _status(f"No solver for {url}")
         return None
 
-    max_steps = 2
-    for _step in range(max_steps):
-        current = page.url
-        if not is_shortener_url(current):
-            return current
-
-        # ouo.io / ouo.press / cutw.in: countdown + "Get Link" button
-        _status("Waiting for countdown...")
-        for _ in range(random.randint(2, 3)):
-            page.mouse.move(random.randint(100, 1100), random.randint(100, 600))
-            time.sleep(random.uniform(0.05, 0.1))
-
-        _status("Waiting for button...")
-        try:
-            page.wait_for_selector("#btn-main:not([disabled])", timeout=12000)
-        except PlaywrightTimeout:
-            pass
-
-        _status("Clicking button...")
-        _remove_overlays_and_click(page)
-
-        _status("Following redirect...")
-        try:
-            page.wait_for_function(
-                f"() => window.location.href !== '{current}'",
-                timeout=10000,
-            )
-        except PlaywrightTimeout:
-            pass
-        time.sleep(0.5)
-
-    # After all steps, check final URL
-    final = page.url
-    if not is_shortener_url(final):
-        return final
-
-    # Last resort: scan page for target links
-    links = page.eval_on_selector_all(
-        "a[href]",
-        "els => els.map(e => e.href)",
-    )
-    for link in links:
-        if not is_shortener_url(link):
-            return link
-    return None
+    _status(f"Using {solver.name}...")
+    return solver.resolve(page, url, status=_status)
 
 
 def _remove_overlays_and_click(page) -> bool:
