@@ -39,7 +39,10 @@ _READY_PATTERNS = [
 
 
 class OuoSolver(RedirectSolver):
-    """Solver for ouo.io shortener URLs."""
+    """Solver for ouo.io shortener URLs with automatic retries."""
+
+    MAX_ATTEMPTS = 3
+    RETRY_DELAY_S = 2
 
     @property
     def name(self) -> str:
@@ -55,14 +58,12 @@ class OuoSolver(RedirectSolver):
         url: str,
         status: Callable[[str], None] | None = None,
     ) -> str | None:
-        """Resolve ouo.io URL through countdown + button click chain.
+        """Resolve ouo.io URL with retries.
 
-        Strategy:
-        1. Try submitting any form on the page first (fast path from AdsBypasser) —
-           this POSTs the shortener data and triggers a redirect past the first page.
-        2. On the /go/ page, wait for the button text to indicate countdown is
-           finished (``#btn-main`` text changes from a number to "I'm a human").
-        3. Click the button to reach the final destination.
+        The redirect chain (form submit → countdown → button click) can be
+        flaky — the page may time out or the countdown widget might not
+        initialise.  We retry up to ``MAX_ATTEMPTS`` times with a fresh
+        navigation each time.
         """
 
         def _status(msg: str) -> None:
@@ -71,6 +72,37 @@ class OuoSolver(RedirectSolver):
             else:
                 logger.debug(msg)
 
+        for attempt in range(1, self.MAX_ATTEMPTS + 1):
+            if attempt > 1:
+                _status(f"Retry {attempt}/{self.MAX_ATTEMPTS}...")
+                # Navigate to blank so the next goto starts fresh
+                try:
+                    await page.goto("about:blank", timeout=5000)
+                except Exception:
+                    pass
+                await asyncio.sleep(self.RETRY_DELAY_S)
+
+            result = await self._resolve_once(page, url, _status)
+            if result is not None and result != url:
+                return result
+
+        return None
+
+    async def _resolve_once(
+        self,
+        page,
+        url: str,
+        _status: Callable[[str], None],
+    ) -> str | None:
+        """Single attempt at resolving an ouo.io URL.
+
+        Strategy:
+        1. Try submitting any form on the page first (fast path from AdsBypasser) —
+           this POSTs the shortener data and triggers a redirect past the first page.
+        2. On the /go/ page, wait for the button text to indicate countdown is
+           finished (``#btn-main`` text changes from a number to "I'm a human").
+        3. Click the button to reach the final destination.
+        """
         from playwright.async_api import TimeoutError as PlaywrightTimeout
 
         # Navigate to URL
