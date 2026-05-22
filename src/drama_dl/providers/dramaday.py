@@ -239,7 +239,11 @@ class DramadayProvider(DramaProvider):
 
         return drama
 
-    def resolve_shorteners(self, episodes: list[Episode]) -> None:
+    def resolve_shorteners(
+        self,
+        episodes: list[Episode],
+        max_workers: int = 4,
+    ) -> None:
         """Resolve shortener URLs using the shared resolver chain."""
         from drama_dl.shortener import is_shortener_url, resolve_shorteners
 
@@ -254,7 +258,7 @@ class DramadayProvider(DramaProvider):
             return
 
         logger.info("Resolving %d shortener URLs...", len(urls))
-        resolved = resolve_shorteners(urls)
+        resolved = resolve_shorteners(urls, max_workers=max_workers)
 
         for episode in episodes:
             for link in episode.links:

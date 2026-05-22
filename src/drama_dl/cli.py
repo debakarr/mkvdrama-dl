@@ -165,6 +165,25 @@ def search(ctx: click.Context, query: str) -> None:
     help="Filter by resolution: 540p, 720p, 1080p (can specify multiple: 720p,1080p)",
 )
 @click.option(
+    "--host",
+    default=None,
+    metavar="HOSTS",
+    help="Only show links from specific file hosts (comma-separated, e.g. buzzheavier.com,send.now)",
+)
+@click.option(
+    "--max-workers",
+    "-w",
+    default=4,
+    type=int,
+    metavar="N",
+    help="Max parallel browser pages for shortener resolution (default: 4)",
+)
+@click.option(
+    "--parallel/--no-parallel",
+    default=True,
+    help="Resolve shorteners in parallel using multiple browser pages (default: parallel)",
+)
+@click.option(
     "--jd",
     "--jdownloader",
     is_flag=True,
@@ -188,6 +207,9 @@ def dl(
     flaresolverr: str | None,
     resolve: bool,
     quality: str | None,
+    host: str | None,
+    max_workers: int,
+    parallel: bool,
     jd: bool,
     jd_dir: str | None,
 ) -> None:
@@ -291,7 +313,20 @@ def dl(
 
     # Resolve shorteners AFTER filtering
     if resolve or flaresolverr or os.getenv("FLARESOLVERR_URL"):
-        provider.resolve_shorteners(episodes)
+        # --no-parallel is equivalent to max_workers=1
+        effective_workers = 1 if not parallel else max_workers
+        provider.resolve_shorteners(episodes, max_workers=effective_workers)
+
+    # Filter by file host domain (after resolution so we have resolved URLs)
+    if host:
+        host_domains = [h.strip().lower() for h in host.split(",")]
+        for ep in episodes:
+            ep.links = [
+                ln for ln in ep.links
+                if ln.url and any(d in ln.url.lower() for d in host_domains)
+            ]
+        episodes = [ep for ep in episodes if ep.links]
+        click.echo(click.style(f"Host filter: {host}", **_STYLE_HINT))
 
     # Collect resolved URLs and extract dcrypt.it direct links
     resolved_urls = _collect_resolved_urls(episodes)

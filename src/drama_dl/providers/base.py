@@ -30,5 +30,14 @@ class DramaProvider(ABC):
         """Fetch drama details and episode links."""
 
     @abstractmethod
-    def resolve_shorteners(self, episodes: list[Episode]) -> None:
-        """Resolve shortener URLs to final destinations."""
+    def resolve_shorteners(
+        self,
+        episodes: list[Episode],
+        max_workers: int = 4,
+    ) -> None:
+        """Resolve shortener URLs to final destinations.
+
+        Args:
+            episodes: Episode list whose links should be resolved in-place.
+            max_workers: Max parallel browser pages for resolution.
+        """

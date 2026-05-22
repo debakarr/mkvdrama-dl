@@ -29,7 +29,7 @@ class RedirectSolver(ABC):
         return any(domain in url for domain in self.domains)
 
     @abstractmethod
-    def resolve(
+    async def resolve(
         self,
         page,
         url: str,
@@ -38,7 +38,7 @@ class RedirectSolver(ABC):
         """Resolve the shortener URL to its final destination.
 
         Args:
-            page: Playwright page object (already navigated to URL).
+            page: Async Playwright page object (already navigated to URL).
             url: The original shortener URL.
             status: Optional callback for progress messages.
 

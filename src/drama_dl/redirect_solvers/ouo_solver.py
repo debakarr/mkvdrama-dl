@@ -2,22 +2,40 @@
 
 Flow:
 1. Navigate to ouo.io/xyz
-2. Wait for countdown (~25 seconds)
-3. Click "I'm a human" button (#btn-main)
-4. Wait for redirect to next ouo.io page
-5. Repeat steps 2-4 (usually 2 iterations)
-6. Final destination reached
+2. Wait for countdown to finish (~25 seconds) by monitoring button text
+3. Click "I'm a human" / "Continue" button (#btn-main)
+4. Wait for redirect to final destination
+5. If still on ouo.io (e.g. /go/ page), repeat from step 2
+
+Note: #btn-main is an <a> tag, not a <button>, so the ``disabled``
+attribute is never set. We detect countdown completion by checking
+when the button text stops showing a number and reads like "I'm a human".
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import random
-import time
+import re
 from collections.abc import Callable
 
 from drama_dl.redirect_solvers.base import RedirectSolver
 
 logger = logging.getLogger(__name__)
+
+# Text patterns indicating the countdown is still running
+_COUNTDOWN_PATTERN = re.compile(r"^\d+$")
+
+# Text indicating a button is ready to click
+_READY_PATTERNS = [
+    "human",
+    "continue",
+    "get link",
+    "proceed",
+    "verify",
+    "submit",
+    "go",
+]
 
 
 class OuoSolver(RedirectSolver):
@@ -31,13 +49,21 @@ class OuoSolver(RedirectSolver):
     def domains(self) -> list[str]:
         return ["ouo.io", "ouo.press"]
 
-    def resolve(
+    async def resolve(
         self,
         page,
         url: str,
         status: Callable[[str], None] | None = None,
     ) -> str | None:
-        """Resolve ouo.io URL through countdown + button click chain."""
+        """Resolve ouo.io URL through countdown + button click chain.
+
+        Strategy:
+        1. Try submitting any form on the page first (fast path from AdsBypasser) —
+           this POSTs the shortener data and triggers a redirect past the first page.
+        2. On the /go/ page, wait for the button text to indicate countdown is
+           finished (``#btn-main`` text changes from a number to "I'm a human").
+        3. Click the button to reach the final destination.
+        """
 
         def _status(msg: str) -> None:
             if status:
@@ -45,12 +71,12 @@ class OuoSolver(RedirectSolver):
             else:
                 logger.debug(msg)
 
-        from playwright.sync_api import TimeoutError as PlaywrightTimeout
+        from playwright.async_api import TimeoutError as PlaywrightTimeout
 
         # Navigate to URL
         _status("Loading page...")
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=20000)
+            await page.goto(url, wait_until="domcontentloaded", timeout=20000)
         except Exception as e:
             logger.debug("Page load failed: %s", e)
             return None
@@ -76,55 +102,80 @@ class OuoSolver(RedirectSolver):
 
             # Human-like mouse movement
             for _ in range(random.randint(2, 3)):
-                page.mouse.move(
+                await page.mouse.move(
                     random.randint(100, 1100),
                     random.randint(100, 600),
                 )
-                time.sleep(random.uniform(0.05, 0.1))
+                await asyncio.sleep(random.uniform(0.05, 0.1))
 
-            # Wait for button to become enabled
-            _status("Waiting for button...")
+            # Also try submitting any form first (fast path used by AdsBypasser)
+            form_submitted = await page.evaluate("""() => {
+                const form = document.querySelector('form');
+                if (form && form.action && !form.action.includes('javascript')) {
+                    const btn = form.querySelector('button, input[type="submit"]');
+                    if (btn && !btn.disabled) { btn.click(); return true; }
+                    form.submit(); return true;
+                }
+                return false;
+            }""")
+            if form_submitted:
+                _status("Form submitted, waiting for redirect...")
+                try:
+                    await page.wait_for_function(
+                        f"() => window.location.href !== '{current}'",
+                        timeout=15000,
+                    )
+                    await asyncio.sleep(1)
+                    continue  # Re-check the URL in next iteration
+                except PlaywrightTimeout:
+                    _status("No redirect from form submit")
+
+            # Wait for the button to be ready (countdown finished).
+            _status("Waiting for countdown to finish...")
             try:
-                page.wait_for_selector(
-                    "#btn-main:not([disabled])",
-                    timeout=30000,  # ouo.io has ~25s countdown
+                await page.wait_for_function(
+                    """() => {
+                        const btn = document.querySelector('#btn-main');
+                        if (!btn) return false;
+                        const text = (btn.textContent || '').trim().toLowerCase();
+                        // Button is ready when text is NOT a bare number
+                        if (/^\\d+$/.test(text)) return false;
+                        // Also make sure it doesn't just say "wait" or "second"
+                        if (text.includes('wait') || text.includes('second')) return false;
+                        return text.length > 0;
+                    }""",
+                    timeout=45000,  # ouo.io has ~25s countdown
                 )
             except PlaywrightTimeout:
-                _status("Button timeout, checking page...")
+                _status("Countdown timeout, trying button anyway...")
 
-            # Check if button exists and click it
-            btn = page.query_selector("#btn-main")
-            if btn and btn.is_visible():
+            # Click the button with human-like behavior
+            btn = await page.query_selector("#btn-main")
+            if btn and await btn.is_visible():
                 _status("Clicking button...")
-                # Human-like mouse movement to button
-                box = btn.bounding_box()
+                box = await btn.bounding_box()
                 if box:
-                    page.mouse.move(
+                    await page.mouse.move(
                         int(box["x"] + box["width"] / 2),
                         int(box["y"] + box["height"] / 2),
                     )
-                    time.sleep(random.uniform(0.1, 0.3))
+                    await asyncio.sleep(random.uniform(0.1, 0.3))
 
-                btn.evaluate("el => el.click()")
+                await btn.evaluate("el => { el.click(); el.dispatchEvent(new MouseEvent('click', {bubbles: true})); }")
 
                 # Wait for navigation
                 _status("Following redirect...")
                 try:
-                    page.wait_for_function(
+                    await page.wait_for_function(
                         f"() => window.location.href !== '{current}'",
-                        timeout=15000,
+                        timeout=20000,
                     )
-                    time.sleep(1)
+                    await asyncio.sleep(1.5)
                 except PlaywrightTimeout:
                     _status("Navigation timeout")
             else:
                 _status("No button found, scanning for links...")
-                # Scan for destination links
-                links = page.evaluate("""() => {
-                    return Array.from(document.querySelectorAll('a[href]'))
-                        .map(a => a.href)
-                        .filter(h => !h.includes('ouo.io') && !h.includes('ouo.press') && !h.startsWith('javascript'));
-                }""")
+                links = await _scan_for_links(page)
                 if links:
                     return links[0]
                 break
@@ -135,12 +186,17 @@ class OuoSolver(RedirectSolver):
             return final
 
         # Last resort: scan for links
-        links = page.evaluate("""() => {
-            return Array.from(document.querySelectorAll('a[href]'))
-                .map(a => a.href)
-                .filter(h => !h.includes('ouo.io') && !h.includes('ouo.press') && !h.startsWith('javascript'));
-        }""")
+        links = await _scan_for_links(page)
         if links:
             return links[0]
 
         return None
+
+
+async def _scan_for_links(page) -> list[str]:
+    """Scan page for external links not pointing to ouo.io."""
+    return await page.evaluate("""() => {
+        return Array.from(document.querySelectorAll('a[href]'))
+            .map(a => a.href)
+            .filter(h => !h.includes('ouo.io') && !h.includes('ouo.press') && !h.startsWith('javascript'));
+    }""")

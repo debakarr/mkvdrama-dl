@@ -1,14 +1,12 @@
-"""Solver for cutw.in auto-redirect shortener.
+"""Solver for cutw.in shortener.
 
-Flow:
-1. Navigate to cutw.in/xyz
-2. Wait for auto-redirect (usually 3-5 seconds)
-3. Final destination reached
+Note: cutw.in redirects to ad landing pages (opera.com, masrawytrend.com,
+clixvista.com), never to a real file host.  Skipped immediately — no
+Playwright navigation attempted.
 """
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import Callable
 
 from drama_dl.redirect_solvers.base import RedirectSolver
@@ -17,7 +15,11 @@ logger = logging.getLogger(__name__)
 
 
 class CutwSolver(RedirectSolver):
-    """Solver for cutw.in shortener URLs."""
+    """Solver for cutw.in shortener URLs.
+
+    These always redirect to ad pages, never to real file hosts.  Returns
+    ``None`` without attempting navigation.
+    """
 
     @property
     def name(self) -> str:
@@ -27,13 +29,18 @@ class CutwSolver(RedirectSolver):
     def domains(self) -> list[str]:
         return ["cutw.in"]
 
-    def resolve(
+    async def resolve(
         self,
         page,
         url: str,
         status: Callable[[str], None] | None = None,
     ) -> str | None:
-        """Resolve cutw.in URL to final destination via auto-redirect."""
+        """Resolve cutw.in URL — always returns ``None``.
+
+        No Playwright navigation is attempted because cutw.in redirects
+        to ad landing pages (opera.com, masrawytrend.com, clixvista.com),
+        never to real file hosts.
+        """
 
         def _status(msg: str) -> None:
             if status:
@@ -41,38 +48,5 @@ class CutwSolver(RedirectSolver):
             else:
                 logger.debug(msg)
 
-        _status("Loading page...")
-        try:
-            page.goto(url, wait_until="domcontentloaded", timeout=15000)
-        except Exception as e:
-            logger.debug("Page load failed: %s", e)
-            return None
-
-        # Wait for auto-redirect
-        _status("Waiting for auto-redirect...")
-        start_url = page.url
-        max_wait = 15  # seconds
-
-        for i in range(max_wait):
-            time.sleep(1)
-            current = page.url
-            if current != start_url and "cutw.in" not in current:
-                _status(f"Redirected after {i+1}s")
-                return current
-
-        # Check if we're still on cutw.in
-        final = page.url
-        if "cutw.in" not in final:
-            return final
-
-        # Scan for links as fallback
-        _status("Scanning for destination links...")
-        links = page.evaluate("""() => {
-            return Array.from(document.querySelectorAll('a[href]'))
-                .map(a => a.href)
-                .filter(h => !h.includes('cutw.in') && !h.startsWith('javascript'));
-        }""")
-        if links:
-            return links[0]
-
+        _status("Not supported — redirects to ad landing pages")
         return None
