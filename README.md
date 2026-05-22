@@ -29,8 +29,17 @@ uv run drama dl "sold out on you" --episode 1-5
 # Filter by quality (540p, 720p, 1080p)
 uv run drama dl "all of us are dead" --quality 1080p
 
-# Resolve shorteners to final URLs (requires Playwright)
+# Resolve shorteners to final URLs (parallel by default, requires Playwright)
 uv run drama dl "all of us are dead" --quality 1080p --resolve
+
+# Filter resolved URLs by file host (after resolution)
+uv run drama dl "all of us are dead" --quality 1080p --resolve --host send.now,buzzheavier.com
+
+# Use fewer parallel browser pages (default: 4)
+uv run drama dl "all of us are dead" --resolve --max-workers 2
+
+# Use sequential resolution (one URL at a time, live progress)
+uv run drama dl "all of us are dead" --resolve --no-parallel
 
 # Use FlareSolverr instead of Playwright
 uv run drama dl "all of us are dead" --flaresolverr http://localhost:8191
@@ -72,15 +81,48 @@ mkvdrama.net _c/ link  →  ouo.io shortener  →  filecrypt.cc container  →  
 ### dramaday.me Resolution Chain
 
 ```
-dramaday.me page  →  HTML table parse  →  exe.io/cutw.in/ouo.io  →  Mega/Pixeldrain/Send/Buzzheavier
+dramaday.me page  →  HTML table parse  →  exe.io✗ / cutw.in✗ / ouo.io  →  Send/Buzzheavier/Mega/Pixeldrain
 ```
 
 1. **HTML Parsing**: Scrapes the drama page directly (no API needed)
 2. **Download Table**: Parses the Episode | Quality | Download table structure
 3. **Shortener Resolution** (`--resolve`):
    - `exe.io/full/` URLs are decoded directly (base64, no browser needed)
-   - `cutw.in` and `ouo.io` URLs are resolved via Playwright/FlareSolverr
+   - **exe.io** / **exeygo.com** — skipped immediately (requires Cloudflare Turnstile, unresolvable)
+   - **cutw.in** — skipped immediately (redirects to ad pages, never to real file hosts)
+   - **ouo.io** (remaining) — resolved in parallel via async Playwright with automatic retries
 4. **Organized Output**: Same per-host-domain `.txt` file structure
+
+### Parallel Resolution
+
+Shortener URLs are resolved **in parallel by default** using Playwright's async API.
+One Chromium browser is launched with N pages (tabs), and URLs are dispatched across
+them via an `asyncio` worker pool:
+
+```
+         ┌─────────────┐
+         │  Chromium   │
+         │  (1 process)│
+         ├──────┬──────┤
+         │Page 1│Page 2│  ...  Page N
+         │  │   │  │   │      │   │
+         │ouo.io│ouo.io│      cutw.in✗
+         │ouo.io│ouo.io│      exe.io✗
+         └──────┴──────┘
+```
+
+**Controls**:
+- `--max-workers N` / `-w N` — number of parallel pages (default: 4)
+- `--parallel` (default) / `--no-parallel` — toggle parallel mode
+
+Sequential mode (`--no-parallel`) shows live `\r` progress lines; parallel mode
+prints results as they complete.
+
+### Automatic Retries
+
+Ouo.io resolution is wrapped in a retry loop (3 attempts, 2s delay) with fresh
+page navigation between attempts. This handles intermittent failures where the
+countdown widget doesn't initialize or the page times out on the first try.
 
 ## Download Options
 
@@ -88,6 +130,7 @@ dramaday.me page  →  HTML table parse  →  exe.io/cutw.in/ouo.io  →  Mega/P
 |--------|-----|----------|
 | **No resolution** | Just copy the shortener links | Pasting into JDownloader2 |
 | **`--resolve`** | Playwright automates shorteners → direct URLs + per-host `.txt` files | Getting organized direct links |
+| **`--host`** | Filter resolved URLs by file host domain (e.g. `--host send.now,buzzheavier.com`) | Only want links from specific hosts |
 | **`--jd` / `--jdownloader`** | Writes `.crawljob` file to JDownloader2's monitored folder | Bulk downloads without manual link copying |
 | **dcrypt.it** | Paste filecrypt URL at dcrypt.it → all direct links | Extracting Mega/Pixeldrain/Gofile URLs |
 | **JDownloader2** | Paste any shortener/filecrypt link | Bulk downloads (handles everything) |
@@ -109,6 +152,9 @@ automatically to `~/Downloads/drama-dl/{Drama Name}/`.
 ```bash
 # Default output location (~/Downloads/drama-dl/)
 drama dl "all of us are dead" --quality 1080p --resolve
+
+# Filter by file host (post-resolution)
+drama dl "all of us are dead" --quality 1080p --resolve --host buzzheavier.com,send.now
 
 # Custom output location
 drama dl "all of us are dead" --resolve --output-dir ./my-downloads
@@ -161,6 +207,30 @@ drama dl "drama" --quality 1080p
 drama dl "drama" --quality "720p,1080p"
 ```
 
+## Host Filter
+
+Filter resolved URLs by file host domain (substring match). Applied after
+resolution so the definitive destination is known.
+
+```bash
+drama dl "drama" --resolve --host buzzheavier.com,send.now
+```
+
+## Performance Tuning
+
+For large batches (e.g. full series with 50+ episodes):
+
+```bash
+# More parallel workers (if you have RAM/CPU)
+drama dl "drama" --resolve --max-workers 8
+
+# Fewer workers to avoid rate-limiting
+drama dl "drama" --resolve --max-workers 2
+
+# Sequential with live progress
+drama dl "drama" --resolve --no-parallel
+```
+
 ## Environment Variables
 
 | Variable | Description |
@@ -177,7 +247,9 @@ drama dl "drama" --quality "720p,1080p"
 - Uses Cloudflare protection with a gate/pass API flow
 - Requires `cloudscraper` for TLS fingerprint impersonation
 - ouo.io uses Cloudflare Turnstile challenges that require browser automation
-- oii.la links are skipped during `--resolve` (complex multi-page chain)
+- oii.la links are skipped during `--resolve` (complex multi-page redirect chain)
+- Shortener resolution uses parallel async Playwright (default: 4 pages)
+- ouo.io retries up to 3 times on transient failures
 
 ### dramaday.me
 
@@ -190,10 +262,11 @@ drama dl "drama" --quality "720p,1080p"
 - No gate/pass API — all links are directly in the HTML page
 - Download section uses a table with columns: Episode | Quality | Download
 - Host links: AkiraBox, MEGA, Pixeldrain, Send, Buzzheavier
-- Shortener domains:
-  - **exe.io** — main shortener; `/full/` URLs are base64-decoded directly (no browser)
-  - **cutw.in** — used for MEGA links; resolved via Playwright
-  - **ouo.io** — used for Send and Buzzheavier links; resolved via Playwright
+- Shortener handling:
+  - **exe.io/full/** — base64-decoded directly (no browser, always works)
+  - **exe.io** / **exeygo.com** — **skipped** (requires Cloudflare Turnstile captcha, unresolvable)
+  - **cutw.in** — **skipped** (redirects to ad landing pages, never to file hosts)
+  - **ouo.io** — resolved via async Playwright with 3 automatic retries
 
 ## Adding New Providers
 
